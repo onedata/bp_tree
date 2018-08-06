@@ -14,7 +14,7 @@
 -include("bp_tree.hrl").
 
 %% API exports
--export([find/2, find_offset/2, find_next/2, lower_bound/2, lower_bound_node/2]).
+-export([find_offset/2, find_next/2, lower_bound/2, lower_bound_node/2]).
 -export([find_leftmost/1]).
 
 -type find_pos_result() :: {{ok, pos_integer(), bp_tree:tree_node()} |
@@ -25,19 +25,6 @@
 %%====================================================================
 %% API functions
 %%====================================================================
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Returns leaf containing provided key. Along with the node position of the key
-%% is provided.
-%% @end
-%%--------------------------------------------------------------------
--spec find(bp_tree:key(), bp_tree:tree()) -> find_pos_result().
-find(Key, Tree) ->
-    case bp_tree_store:get_root_id(Tree) of
-        {{ok, RootId}, Tree2} -> find(Key, RootId, Tree2);
-        {{error, Reason}, Tree2} -> {{error, Reason}, Tree2}
-    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -111,22 +98,6 @@ find_leftmost(Tree) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Returns leaf of a B+ tree, rooted in a node identified by ID, that contains
-%% provided key. Along with the node position of the key is provided.
-%% @end
-%%--------------------------------------------------------------------
--spec find(bp_tree:key(), bp_tree_node:id(), bp_tree:tree()) ->
-    find_pos_result().
-find(Key, NodeId, Tree) ->
-    {[{_, Node} | _], Tree2} = bp_tree_path:find(Key, NodeId, Tree),
-    case bp_tree_node:find_pos(Key, Node) of
-        {ok, Pos} -> {{ok, Pos, Node}, Tree2};
-        {error, Reason} -> {{error, Reason}, Tree2}
-    end.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
 %% Returns node and position of next key in B+ tree. Builds a path of right
 %% siblings of nodes along the path from a root node to a leaf associated
 %% with a key.
@@ -153,6 +124,7 @@ find_next(Key, NodeId, Tree, Path) ->
     [bp_tree_node:id()]) -> find_pos_result().
 find_next_in_leaf(Key, Node, Tree, Path) ->
     Pos = bp_tree_node:lower_bound(Key, Node),
+    % TODO - change
     case bp_tree_node:value(Pos + 1, Node) of
         {ok, _} ->
             {{ok, Pos + 1, Node}, Tree};

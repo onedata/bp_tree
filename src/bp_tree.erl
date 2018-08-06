@@ -35,11 +35,13 @@
 -type fold_acc() :: any().
 -type fold_fun() :: fun((key(), value(), fold_acc()) -> fold_acc()).
 -type fold_next_node_id() :: bp_tree_node:id() | undefined.
+-type fold_start_spec() :: {pos, pos_integer()} | {key, key()} | all.
 -type error() :: {error, term()}.
 -type error_stacktrace() :: {error, {term(), [erlang:stack_item()]}}.
 
 -export_type([key/0, value/0, tree/0, tree_node/0, order/0]).
--export_type([remove_pred/0, fold_init/0, fold_acc/0, fold_fun/0]).
+-export_type([remove_pred/0]).
+-export_type([fold_init/0, fold_acc/0, fold_fun/0, fold_start_spec/0]).
 
 %%====================================================================
 %% API functions
@@ -99,17 +101,17 @@ find(Key, Tree = #bp_tree{}) ->
 %%--------------------------------------------------------------------
 -spec insert(key(), value(), tree()) ->
     {ok | error() | error_stacktrace(), tree()}.
-insert(Key, Value, Tree = #bp_tree{order = Order}) ->
+insert(Key, Value, Tree) ->
     try
         case bp_tree_store:get_root_id(Tree) of
             {{ok, RootId}, Tree2} ->
-                {Path, Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+                {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
                 insert(Key, Value, Path, Tree3);
             {{error, not_found}, Tree2} ->
-                Root = bp_tree_node:new(Order, true),
+                Root = bp_tree_node:new(true),
                 {{ok, RootId}, Tree3} = bp_tree_store:create_node(Root, Tree2),
                 {ok, Tree4} = bp_tree_store:set_root_id(RootId, Tree3),
-                {Path, Tree5} = bp_tree_path:find_with_sibling(Key, RootId, Tree4),
+                {Path, Tree5} = bp_tree_path:find(Key, RootId, Tree4),
                 insert(Key, Value, Path, Tree5)
         end
     catch
@@ -135,7 +137,7 @@ remove(Key, Tree = #bp_tree{}) ->
 remove(Key, Predicate, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-        {Path, Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+        {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
         remove(Key, Predicate, Path, ?NIL, Tree3)
     catch
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
@@ -161,28 +163,28 @@ fold(Fun, Acc, Tree) ->
 fold({node_id, NodeId}, Fun, Acc, Tree) ->
     case bp_tree_store:get_node(NodeId, Tree) of
         {{ok, Node}, Tree2} ->
-            {{ok, fold_node(1, Node, Fun, Acc)}, Tree2};
+            {{ok, fold_node(all, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
 fold({offset, Offset}, Fun, Acc, Tree) ->
     case bp_tree_leaf:find_offset(Offset, Tree) of
         {{ok, Pos, Node}, Tree2} ->
-            {{ok, fold_node(Pos, Node, Fun, Acc)}, Tree2};
+            {{ok, fold_node({pos, Pos}, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
 fold({start_key, Key}, Fun, Acc, Tree) ->
-    case bp_tree_leaf:lower_bound(Key, Tree) of
-        {{ok, Pos, Node}, Tree2} ->
-            {{ok, fold_node(Pos, Node, Fun, Acc)}, Tree2};
+    case bp_tree_leaf:lower_bound_node(Key, Tree) of
+        {{ok, Node}, Tree2} ->
+            {{ok, fold_node({key, Key}, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
 fold({node_of_key, Key}, Fun, Acc, Tree) ->
     case bp_tree_leaf:lower_bound_node(Key, Tree) of
         {{ok, Node}, Tree2} ->
-            {{ok, fold_node(1, Node, Fun, Acc)}, Tree2};
+            {{ok, fold_node(all, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
@@ -191,12 +193,13 @@ fold({node_prev_to_key, Key}, Fun, Acc, Tree) ->
         {_, undefined, Tree2} ->
             {{error, first_node}, Tree2};
         {_, Node, Tree2} ->
-            {{ok, fold_node(1, Node, Fun, Acc)}, Tree2}
+            {{ok, fold_node(all, Node, Fun, Acc)}, Tree2}
     end;
+% TODO - low performance
 fold({prev_key, Key}, Fun, Acc, Tree) ->
     case bp_tree_leaf:find_next(Key, Tree) of
         {{ok, Pos, Node}, Tree2} ->
-            {{ok, fold_node(Pos, Node, Fun, Acc)}, Tree2};
+            {{ok, fold_node({pos, Pos}, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end.
@@ -213,7 +216,7 @@ get_prev_leaf({node, NodeId}, Tree) ->
     get_prev_leaf(NodeId, Node, Tree2);
 get_prev_leaf({key, Key}, Tree) ->
     {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-    {[{{NodeId, _Node}, _, _} | Path], Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+    {[{NodeId, _Node} | Path], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
     get_prev_leaf(Path, NodeId, Key, Tree3).
 
 %%====================================================================
@@ -228,14 +231,14 @@ get_prev_leaf({key, Key}, Tree) ->
 %% pair into next node on path.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(key(), value(), bp_tree_path:path_with_sibling(), tree()) ->
+-spec insert(key(), value(), bp_tree_path:path(), tree()) ->
     {ok | error(), tree()}.
-insert(Key, Value, [], Tree = #bp_tree{order = Order}) ->
-    Root = bp_tree_node:new(Order, false),
+insert(Key, Value, [], Tree) ->
+    Root = bp_tree_node:new(false),
     {ok, Root2} = bp_tree_node:insert(Key, Value, Root),
     {{ok, RootId}, Tree2} = bp_tree_store:create_node(Root2, Tree),
     bp_tree_store:set_root_id(RootId, Tree2);
-insert(Key, Value, [{{NodeId, Node}, _, _} | Path], Tree = #bp_tree{order = Order}) ->
+insert(Key, Value, [{NodeId, Node} | Path], Tree = #bp_tree{order = Order}) ->
     {ok, Node2} = bp_tree_node:insert(Key, Value, Node),
     case bp_tree_node:size(Node2) > 2 * Order of
         true ->
@@ -253,9 +256,9 @@ insert(Key, Value, [{{NodeId, Node}, _, _} | Path], Tree = #bp_tree{order = Orde
 %% path with a sibling.
 %% @end
 %%--------------------------------------------------------------------
--spec remove(key(), remove_pred(), bp_tree_path:path_with_sibling(),
+-spec remove(key(), remove_pred(), bp_tree_path:path() | bp_tree_path:path_with_sibling(),
     bp_tree_node:id(), tree()) -> {ok | error(), tree()}.
-remove(Key, Pred, [{{NodeId, Node}, ?NIL, ?NIL}], ChildId, Tree) ->
+remove(Key, Pred, [{NodeId, Node}], ChildId, Tree) ->
     {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
     case {bp_tree_node:size(Node2), ChildId} of
         {0, ?NIL} ->
@@ -267,6 +270,18 @@ remove(Key, Pred, [{{NodeId, Node}, ?NIL, ?NIL}], ChildId, Tree) ->
         _ ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
     end;
+remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
+    {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
+    case bp_tree_node:size(Node2) < Order of
+        true ->
+            {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
+            {Path, Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+            remove(Key, Pred, Path, ?NIL, Tree3);
+        false ->
+            bp_tree_store:update_node(NodeId, Node2, Tree)
+    end;
+remove(Key, Pred, [{{NodeId, Node}, ?NIL, ?NIL}], ChildId, Tree) ->
+    remove(Key, Pred, [{NodeId, Node}], ChildId, Tree);
 remove(Key, Pred, [{{NodeId, Node}, ParentKey, SNodeId} | Path], _,
     Tree = #bp_tree{order = Order}
 ) ->
@@ -294,7 +309,7 @@ split_node(NodeId, Node, Tree, []) ->
     {{ok, NewNodeId}, Tree3} = bp_tree_store:create_node(LNode2, Tree2),
     {ok, Tree4} = bp_tree_store:delete_node(NodeId, Tree3),
     {{Key2, NewNodeId, RNodeId}, Tree4};
-split_node(NodeId, Node, Tree, [{{PNodeId, PNode}, P1, P2} | PathTail]) ->
+split_node(NodeId, Node, Tree, [{PNodeId, PNode} | PathTail]) ->
     {ok, LNode, Key2, RNode} = bp_tree_node:split(Node),
     {{ok, RNodeId}, Tree2} = bp_tree_store:create_node(RNode, Tree),
     LNode2 = bp_tree_node:set_right_sibling(RNodeId, LNode),
@@ -302,7 +317,7 @@ split_node(NodeId, Node, Tree, [{{PNodeId, PNode}, P1, P2} | PathTail]) ->
     {ok, Tree4} = bp_tree_store:delete_node(NodeId, Tree3),
 
     {ok, PNode2} = bp_tree_node:insert(Key2, {NewNodeId, RNodeId}, PNode),
-    NewPath = [{{PNodeId, PNode2}, P1, P2} | PathTail],
+    NewPath = [{PNodeId, PNode2} | PathTail],
     Tree5 = update_sibling_smaller_key(NewPath, NewNodeId, Key2, Tree4,
       NewNodeId, LNode2#bp_tree_node.leaf),
 
@@ -437,13 +452,17 @@ update_sibling_greater_key([{{NodeID, Node}, _, _} | PathTail], CheckID, Key,
 %% Finds node left to the chosen one and set right sibling in this node.
 %% @end
 %%--------------------------------------------------------------------
--spec update_sibling_smaller_key(bp_tree_path:path_with_sibling(),
+-spec update_sibling_smaller_key(bp_tree_path:path() | bp_tree_path:path_with_sibling(),
     bp_tree_node:id(), key(), tree(), bp_tree_node:id(), boolean()) -> tree().
 update_sibling_smaller_key(_Path, _CheckID, _Key, Tree, _ToSet, false) ->
     Tree;
 update_sibling_smaller_key([], _CheckID, _Key, Tree, _ToSet, _IdLeaf) ->
     Tree;
 update_sibling_smaller_key([{{NodeID, Node}, _, _} | PathTail], CheckID, Key,
+    Tree, ToSet, IdLeaf) ->
+    update_sibling_smaller_key([{NodeID, Node} | PathTail], CheckID, Key,
+        Tree, ToSet, IdLeaf);
+update_sibling_smaller_key([{NodeID, Node} | PathTail], CheckID, Key,
     Tree, ToSet, IdLeaf) ->
     {ok, NextID} = bp_tree_node:leftmost_child(Node),
     case NextID of
@@ -485,7 +504,7 @@ update_sibling(Key, NodeID, Node, Tree, ToSet) ->
 get_prev_leaf(NodeId, Node, Tree) ->
     {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
     {ok, Key} = bp_tree_node:key(1, Node),
-    {[{{NodeId, Node}, _, _} | Path], Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+    {[{NodeId, Node} | Path], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
     get_prev_leaf(Path, NodeId, Key, Tree3).
 
 %%--------------------------------------------------------------------
@@ -498,7 +517,7 @@ get_prev_leaf(NodeId, Node, Tree) ->
     tree()) -> {bp_tree_node:id() | undefined, tree_node() | undefined, tree()}.
 get_prev_leaf([], _CheckID, _Key, Tree) ->
     {undefined, undefined, Tree};
-get_prev_leaf([{{NodeID, Node}, _, _} | PathTail], CheckID, Key, Tree) ->
+get_prev_leaf([{NodeID, Node} | PathTail], CheckID, Key, Tree) ->
     {ok, NextID} = bp_tree_node:leftmost_child(Node),
     case NextID of
         CheckID ->
@@ -529,21 +548,16 @@ get_prev_leaf_traverse_down(Key, NodeID, Node, Tree) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Folds B+ tree leaf starting from a position.
+%% Folds B+ tree leaf.
 %% @end
 %%--------------------------------------------------------------------
--spec fold_node(pos_integer(), tree_node(), fold_fun(), fold_acc()) ->
+-spec fold_node(fold_start_spec(), tree_node(), fold_fun(), fold_acc()) ->
     {fold_acc(), fold_next_node_id()}.
-fold_node(Pos, Node, Fun, Acc) ->
-    case {bp_tree_node:key(Pos, Node), bp_tree_node:value(Pos, Node)} of
-        {{ok, Key}, {ok, Value}} ->
-            Acc2 = Fun(Key, Value, Acc),
-            fold_node(Pos + 1, Node, Fun, Acc2);
-        {{error, out_of_range}, {error, out_of_range}} ->
-            case bp_tree_node:right_sibling(Node) of
-                {ok, NodeId} -> {Acc, NodeId};
-                {error, not_found} -> {Acc, undefined}
-            end
+fold_node(KeyOrPos, Node, Fun, Acc) ->
+    Acc2 = bp_tree_node:fold(KeyOrPos, Node, Fun, Acc),
+    case bp_tree_node:right_sibling(Node) of
+        {ok, NodeId} -> {Acc2, NodeId};
+        {error, not_found} -> {Acc2, undefined}
     end.
 
 %%--------------------------------------------------------------------
