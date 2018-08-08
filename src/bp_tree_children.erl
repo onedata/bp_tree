@@ -1,25 +1,20 @@
 %%%-------------------------------------------------------------------
-%%% @author Krzysztof Trzepla
-%%% @copyright (C) 2017: Krzysztof Trzepla
+%%% @author Michał Wrzeszcz
+%%% @copyright (C) 2018: Michał Wrzeszcz
 %%% This software is released under the MIT license cited in 'LICENSE.md'.
 %%% @end
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% This module provides an API to a so-called zig-zag array. Zig-zag array
-%%% is an array in which two consecutive values are separated with a key that
-%%% identifies those values, i.e. each key is associated with two values:
-%%% left and right. Moreover keys in zig-zag array are sorted in ascending
-%%% order and duplicated keys are not allowed. Example zig-zag array:
-%%% v1 k1 v2 k2 v3 k3 v4.
+%%% This module provides API on children record.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(bp_tree_children).
--author("Krzysztof Trzepla").
+-author("Michał Wrzeszcz").
 
 -include("bp_tree.hrl").
 
 %% API exports
--export([new/0, size/1]).
+-export([new/1, size/1]).
 -export([get/2, update_last_value/2, remove/2, remove/3]).
 -export([find/2, find_value/2, lower_bound/2]).
 -export([insert/3, append/3, prepend/3, split/1, merge/2]).
@@ -31,7 +26,8 @@
 
 -record(bp_tree_children, {
     last_value = ?NIL :: value(),
-    data :: gb_trees:tree()
+    data :: gb_trees:tree(),
+    max_size :: bp_tree:order() % only to allow conversion with bp_tree_array
 }).
 
 -type key() :: any().
@@ -52,10 +48,11 @@
 %% Creates a new array.
 %% @end
 %%--------------------------------------------------------------------
--spec new() -> children().
-new() ->
+-spec new(bp_tree:order()) -> children().
+new(MaxSize) ->
     #bp_tree_children{
-        data = gb_trees:empty()
+        data = gb_trees:empty(),
+        max_size = MaxSize
     }.
 
 %%--------------------------------------------------------------------
@@ -340,7 +337,7 @@ remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec split(children()) -> {children(), key(), children()}.
-split(#bp_tree_children{data = Tree} = Children) ->
+split(#bp_tree_children{data = Tree, max_size = MaxSize} = Children) ->
     Size = gb_trees:size(Tree),
     SplitBase = Size div 2,
     SplitSize = SplitBase + 1,
@@ -348,7 +345,8 @@ split(#bp_tree_children{data = Tree} = Children) ->
     Left = lists:sublist(List, SplitBase),
     [{SplitKey, SplitValue} | Right] = lists:sublist(List, SplitSize, SplitSize),
     {
-        #bp_tree_children{data = gb_trees:from_orddict(Left), last_value = SplitValue},
+        #bp_tree_children{data = gb_trees:from_orddict(Left),
+            last_value = SplitValue, max_size = MaxSize},
         SplitKey,
         Children#bp_tree_children{data = gb_trees:from_orddict(Right)}
     }.
@@ -370,11 +368,12 @@ merge(#bp_tree_children{data = LTree}, #bp_tree_children{data = RTree} = Childre
 %% @end
 %%--------------------------------------------------------------------
 -spec to_map(children()) -> #{key() => value()}.
-to_map(#bp_tree_children{data = Tree, last_value = LV}) ->
+to_map(#bp_tree_children{data = Tree, last_value = LV, max_size = Size}) ->
     Map1 = maps:from_list(gb_trees:to_list(Tree)),
+    Map2 = Map1#{?SIZE_KEY => 2 * Size + 1},
     case LV of
-        ?NIL -> Map1;
-        _ -> Map1#{?LAST_KEY => LV}
+        ?NIL -> Map2;
+        _ -> Map2#{?LAST_KEY => LV}
     end.
 
 %%--------------------------------------------------------------------
@@ -386,8 +385,12 @@ to_map(#bp_tree_children{data = Tree, last_value = LV}) ->
 from_map(Map) ->
     LV = maps:get(?LAST_KEY, Map, ?NIL),
     Map2 = maps:remove(?LAST_KEY, Map),
-    Tree = gb_trees:from_orddict(lists:sort(maps:to_list(Map2))),
-    #bp_tree_children{data = Tree, last_value = LV}.
+
+    Size = maps:get(?SIZE_KEY, Map2, 0),
+    Map3 = maps:remove(?SIZE_KEY, Map2),
+
+    Tree = gb_trees:from_orddict(lists:sort(maps:to_list(Map3))),
+    #bp_tree_children{data = Tree, last_value = LV, max_size = (Size - 1) div 2}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -438,13 +441,16 @@ to_list(#bp_tree_children{data = Tree, last_value = LV}) ->
 -spec from_list(list()) -> children().
 from_list(List) ->
     {List2, LV} = lists:foldl(fun
+        (?NIL, Acc) ->
+            Acc;
         (Element, {Acc, ?NIL}) ->
             {Acc, Element};
         (Key, {Acc, Value}) ->
             {[{Key, Value} | Acc], ?NIL}
     end, {[], ?NIL}, List),
     Tree = gb_trees:from_orddict(lists:reverse(List2)),
-    #bp_tree_children{data = Tree, last_value = LV}.
+    #bp_tree_children{data = Tree, last_value = LV,
+        max_size = (length(List) - 1) div 2}.
 
 %%====================================================================
 %% Internal functions
