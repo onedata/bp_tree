@@ -14,7 +14,7 @@
 -include("bp_tree.hrl").
 
 %% API exports
--export([new/1]).
+-export([new/2]).
 -export([key/2, value/2, size/1]).
 -export([right_sibling/1, set_right_sibling/2]).
 -export([child/2, child_with_sibling/2, child_with_right_sibling/2]).
@@ -37,11 +37,11 @@
 %% Creates B+ tree node.
 %% @end
 %%--------------------------------------------------------------------
--spec new(boolean()) -> bp_tree:tree_node().
-new(Leaf) ->
+-spec new(boolean(), bp_tree:order()) -> bp_tree:tree_node().
+new(Leaf, MaxSize) ->
     #bp_tree_node{
         leaf = Leaf,
-        children = bp_tree_children:new()
+        children = bp_tree_children:new(MaxSize)
     }.
 
 %%--------------------------------------------------------------------

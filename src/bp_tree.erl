@@ -101,14 +101,14 @@ find(Key, Tree = #bp_tree{}) ->
 %%--------------------------------------------------------------------
 -spec insert(key(), value(), tree()) ->
     {ok | error() | error_stacktrace(), tree()}.
-insert(Key, Value, Tree) ->
+insert(Key, Value, #bp_tree{order = Order} = Tree) ->
     try
         case bp_tree_store:get_root_id(Tree) of
             {{ok, RootId}, Tree2} ->
                 {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
                 insert(Key, Value, Path, Tree3);
             {{error, not_found}, Tree2} ->
-                Root = bp_tree_node:new(true),
+                Root = bp_tree_node:new(true, Order),
                 {{ok, RootId}, Tree3} = bp_tree_store:create_node(Root, Tree2),
                 {ok, Tree4} = bp_tree_store:set_root_id(RootId, Tree3),
                 {Path, Tree5} = bp_tree_path:find(Key, RootId, Tree4),
@@ -233,8 +233,8 @@ get_prev_leaf({key, Key}, Tree) ->
 %%--------------------------------------------------------------------
 -spec insert(key(), value(), bp_tree_path:path(), tree()) ->
     {ok | error(), tree()}.
-insert(Key, Value, [], Tree) ->
-    Root = bp_tree_node:new(false),
+insert(Key, Value, [], #bp_tree{order = Order} = Tree) ->
+    Root = bp_tree_node:new(false, Order),
     {ok, Root2} = bp_tree_node:insert(Key, Value, Root),
     {{ok, RootId}, Tree2} = bp_tree_store:create_node(Root2, Tree),
     bp_tree_store:set_root_id(RootId, Tree2);
