@@ -41,7 +41,7 @@
 new(Leaf, MaxSize) ->
     #bp_tree_node{
         leaf = Leaf,
-        children = bp_tree_children:new(MaxSize)
+        children = bp_tree_children:new(2 * MaxSize + 1)
     }.
 
 %%--------------------------------------------------------------------
