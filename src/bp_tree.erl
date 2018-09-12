@@ -101,8 +101,9 @@ find(Key, Tree = #bp_tree{}) ->
 %%--------------------------------------------------------------------
 -spec insert(key(), value(), tree()) ->
     {ok | error() | error_stacktrace(), tree()}.
-insert(Key, Value, #bp_tree{order = Order} = Tree) ->
+insert(Key, Value, #bp_tree{order = Order} = Tree0) ->
     try
+        {Tree, _} = rebalance_before_op(Tree0),
         case bp_tree_store:get_root_id(Tree) of
             {{ok, RootId}, Tree2} ->
                 {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
@@ -115,7 +116,27 @@ insert(Key, Value, #bp_tree{order = Order} = Tree) ->
                 insert(Key, Value, Path, Tree5)
         end
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree0)
+    end.
+
+rebalance_before_op(Tree) ->
+    rebalance_before_op(Tree, undefined).
+
+rebalance_before_op(Tree, NodeId) ->
+    case get(rebalance_info) of
+        undefined ->
+            {Tree, false};
+        {_, NodeId} ->
+            {Tree, false};
+        {RebalanceKey, _} ->
+            {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
+            {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
+                SNodeId} | RebalancePath], Tree3} =
+                bp_tree_path:find_with_sibling(RebalanceKey, RootId, Tree2),
+            {_, Tree4} = rebalance_node(RebalanceKey, RebalanceNodeId,
+                RebalanceNode, ParentKey, SNodeId, RebalancePath, Tree3),
+            erase(rebalance_info),
+            {Tree4, true}
     end.
 
 %%--------------------------------------------------------------------
@@ -272,11 +293,28 @@ remove(Key, Pred, [{NodeId, Node}], ChildId, Tree) ->
     end;
 remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
     {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
-    case bp_tree_node:size(Node2) < Order of
+    Size = bp_tree_node:size(Node2),
+    case Size < Order of
         true ->
-            {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-            {Path, Tree3} = bp_tree_path:find_with_sibling(Key, RootId, Tree2),
-            remove(Key, Pred, Path, ?NIL, Tree3);
+            {Tree2, Rebalanced} = rebalance_before_op(Tree, NodeId),
+
+            case Size of
+                0 ->
+                    erase(rebalance_info);
+                _ ->
+                    put(rebalance_info, {Key, NodeId})
+            end,
+
+            case Rebalanced of
+                true ->
+                    {{ok, RootId}, Tree3} = bp_tree_store:get_root_id(Tree2),
+                    {[{NewNodeId, NewNode} | _], Tree4} = bp_tree_path:find(Key, RootId, Tree3),
+
+                    {ok, NewNode2} = bp_tree_node:remove(Key, Pred, NewNode),
+                    bp_tree_store:update_node(NewNodeId, NewNode2, Tree4);
+                _ ->
+                    bp_tree_store:update_node(NodeId, Node2, Tree2)
+            end;
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
     end;
@@ -336,16 +374,16 @@ rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
     order = Order
 }) ->
     {{ok, SNode}, Tree2} = bp_tree_store:get_node(SNodeId, Tree),
-    case bp_tree_node:size(SNode) > Order of
+    case bp_tree_node:size(Node) + bp_tree_node:size(SNode) >= 2*Order of
         true when Key =< ParentKey ->
             {NewPath, NewNodeId, Node2, Tree3} = rotate_nodes(Node, SNode,
-                NodeId, SNodeId, ParentKey, Tree2, Path, left),
+                NodeId, SNodeId, ParentKey, Tree2, Path, left, Order),
             Tree4 = update_sibling_smaller_key(NewPath, NewNodeId, Key, Tree3,
                 NewNodeId, Node2#bp_tree_node.leaf),
             {ok, Tree4};
         true ->
             {NewPath, NewNodeId, Node2, Tree3} = rotate_nodes(SNode, Node,
-                SNodeId, NodeId, ParentKey, Tree2, Path, right),
+                SNodeId, NodeId, ParentKey, Tree2, Path, right, Order),
             Tree4 = update_sibling_greater_key(NewPath, NewNodeId, Key, Tree3,
                 NewNodeId, Node2#bp_tree_node.leaf),
             {ok, Tree4};
@@ -391,14 +429,14 @@ merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree,
 %% @end
 %%--------------------------------------------------------------------
 -spec rotate_nodes(tree_node(), tree_node(), bp_tree_node:id(), bp_tree_node:id(),
-    key(), tree(), bp_tree_path:path_with_sibling(), left | right) ->
+    key(), tree(), bp_tree_path:path_with_sibling(), left | right, non_neg_integer()) ->
     {bp_tree_path:path_with_sibling(), bp_tree_node:id(), tree_node(), tree()}.
-rotate_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree, Path, Rotation) ->
+rotate_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree, Path, Rotation, Order) ->
     {Node2, ParentKey2, SNode2} = case Rotation of
         left ->
-            bp_tree_node:rotate_left(Node, ParentKey, SNode);
+            bp_tree_node:rotate_left(Node, ParentKey, SNode, Order);
         _ ->
-            bp_tree_node:rotate_right(Node, ParentKey, SNode)
+            bp_tree_node:rotate_right(Node, ParentKey, SNode, Order)
     end,
     {{ok, NewSNodeId}, Tree2} = bp_tree_store:create_node(SNode2, Tree),
     Node3 = case Node2#bp_tree_node.leaf of

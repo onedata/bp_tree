@@ -21,7 +21,7 @@
 -export([leftmost_child/1]).
 -export([find/2, find_pos/2, lower_bound/2, left_sibling/2]).
 -export([insert/3, remove/3, merge/3, split/1]).
--export([rotate_right/3, rotate_left/3]).
+-export([rotate_right/4, rotate_left/4]).
 -export([fold/4]).
 
 -type id() :: any().
@@ -293,6 +293,16 @@ split(LNode = #bp_tree_node{leaf = false, children = Children}) ->
     RNode = #bp_tree_node{leaf = false, children = RChildren},
     {ok, LNode#bp_tree_node{children = LChildren}, Key, RNode}.
 
+rotate_right(LNode, ParentKey, RNode, Order) ->
+    {LNode2, ParentKey2, RNode2} = Ans =
+        rotate_right(LNode, ParentKey, RNode),
+    case ?MODULE:size(RNode2) < Order of
+        true ->
+            rotate_right(LNode2, ParentKey2, RNode2, Order);
+        _ ->
+            Ans
+    end.
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Moves maximum value from a left sibling to a node.
@@ -323,6 +333,16 @@ rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
         Key,
         RNode#bp_tree_node{children = RChildren2}
     }.
+
+rotate_left(LNode, ParentKey, RNode, Order) ->
+    {LNode2, ParentKey2, RNode2} = Ans =
+        rotate_left(LNode, ParentKey, RNode),
+    case ?MODULE:size(LNode2) < Order of
+        true ->
+            rotate_left(LNode2, ParentKey2, RNode2, Order);
+        _ ->
+            Ans
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
