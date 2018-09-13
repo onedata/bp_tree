@@ -88,8 +88,7 @@ terminate(Tree = #bp_tree{}) ->
 find(Key, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-        {[{_, Leaf} | _] = Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
-        lager:info("uuuuu ~p", [{Path}]),
+        {[{_, Leaf} | _], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
         {bp_tree_node:find(Key, Leaf), Tree3}
     catch
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
