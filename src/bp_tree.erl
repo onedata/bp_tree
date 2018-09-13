@@ -129,6 +129,7 @@ rebalance_before_op(Tree, NodeId) ->
         {_, NodeId} ->
             {Tree, false};
         {RebalanceKey, _} ->
+            % Wiele razy pobieramy to samo np root_id
             {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
             {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
                 SNodeId} | RebalancePath], Tree3} =
@@ -300,20 +301,27 @@ remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
 
             case Size of
                 0 ->
-                    erase(rebalance_info);
-                _ ->
-                    put(rebalance_info, {Key, NodeId})
-            end,
-
-            case Rebalanced of
-                true ->
+                    erase(rebalance_info),
                     {{ok, RootId}, Tree3} = bp_tree_store:get_root_id(Tree2),
-                    {[{NewNodeId, NewNode} | _], Tree4} = bp_tree_path:find(Key, RootId, Tree3),
-
-                    {ok, NewNode2} = bp_tree_node:remove(Key, Pred, NewNode),
-                    bp_tree_store:update_node(NewNodeId, NewNode2, Tree4);
+                    {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
+                        SNodeId} | RebalancePath], Tree4} =
+                        bp_tree_path:find_with_sibling(Key, RootId, Tree3),
+                    {ok, RebalanceNode2} = bp_tree_node:remove(Key, Pred, RebalanceNode),
+                    rebalance_node(Key, RebalanceNodeId,
+                        RebalanceNode2, ParentKey, SNodeId, RebalancePath, Tree4);
                 _ ->
-                    bp_tree_store:update_node(NodeId, Node2, Tree2)
+                    put(rebalance_info, {Key, NodeId}),
+
+                    case Rebalanced of
+                        true ->
+                            {{ok, RootId}, Tree3} = bp_tree_store:get_root_id(Tree2),
+                            {[{NewNodeId, NewNode} | _], Tree4} = bp_tree_path:find(Key, RootId, Tree3),
+
+                            {ok, NewNode2} = bp_tree_node:remove(Key, Pred, NewNode),
+                            bp_tree_store:update_node(NewNodeId, NewNode2, Tree4);
+                        _ ->
+                            bp_tree_store:update_node(NodeId, Node2, Tree2)
+                    end
             end;
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
@@ -387,6 +395,7 @@ rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
             Tree4 = update_sibling_greater_key(NewPath, NewNodeId, Key, Tree3,
                 NewNodeId, Node2#bp_tree_node.leaf),
             {ok, Tree4};
+        % TODO - jak jest pusty node to przepisujemy id a nie merge
         false when Key =< ParentKey ->
             {NewPath, NewNodeId, Node2, Tree3} =
                 merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree2, Path),
