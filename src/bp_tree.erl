@@ -88,7 +88,8 @@ terminate(Tree = #bp_tree{}) ->
 find(Key, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-        {[{_, Leaf} | _], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
+        {[{_, Leaf} | _] = Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
+        lager:info("uuuuu ~p", [{Path}]),
         {bp_tree_node:find(Key, Leaf), Tree3}
     catch
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
@@ -103,7 +104,7 @@ find(Key, Tree = #bp_tree{}) ->
     {ok | error() | error_stacktrace(), tree()}.
 insert(Key, Value, #bp_tree{order = Order} = Tree0) ->
     try
-        {Tree, _} = rebalance_before_op(Tree0),
+        Tree = rebalance_before_op(Tree0),
         case bp_tree_store:get_root_id(Tree) of
             {{ok, RootId}, Tree2} ->
                 {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
@@ -119,25 +120,23 @@ insert(Key, Value, #bp_tree{order = Order} = Tree0) ->
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree0)
     end.
 
-rebalance_before_op(Tree) ->
-    rebalance_before_op(Tree, undefined).
-
-rebalance_before_op(Tree, NodeId) ->
+rebalance_before_op(Tree0) ->
     case get(rebalance_info) of
         undefined ->
-            {Tree, false};
-        {_, NodeId} ->
-            {Tree, false};
-        {RebalanceKey, _} ->
-            % Wiele razy pobieramy to samo np root_id
-            {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-            {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
-                SNodeId} | RebalancePath], Tree3} =
-                bp_tree_path:find_with_sibling(RebalanceKey, RootId, Tree2),
-            {_, Tree4} = rebalance_node(RebalanceKey, RebalanceNodeId,
-                RebalanceNode, ParentKey, SNodeId, RebalancePath, Tree3),
+            Tree0;
+        RBI ->
+            Tree5 = lists:foldl(fun({_NodeId, Key}, Tree) ->
+                % Wiele razy pobieramy to samo np root_id
+                {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
+                {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
+                    SNodeId} | RebalancePath], Tree3} =
+                    bp_tree_path:find_with_sibling(Key, RootId, Tree2),
+                {_, Tree4} = rebalance_node(Key, RebalanceNodeId,
+                    RebalanceNode, ParentKey, SNodeId, RebalancePath, Tree3),
+                Tree4
+            end, Tree0, RBI),
             erase(rebalance_info),
-            {Tree4, true}
+            Tree5
     end.
 
 %%--------------------------------------------------------------------
@@ -297,31 +296,26 @@ remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
     Size = bp_tree_node:size(Node2),
     case Size < Order of
         true ->
-            {Tree2, Rebalanced} = rebalance_before_op(Tree, NodeId),
+            Tree2 = Tree,
+
+            RBI = case get(rebalance_info) of
+                undefined -> [];
+                RI -> RI
+            end,
 
             case Size of
                 0 ->
-                    erase(rebalance_info),
+                    put(rebalance_info, proplists:delete(NodeId, RBI)),
                     {{ok, RootId}, Tree3} = bp_tree_store:get_root_id(Tree2),
-                    {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
+                    {[{{NodeId, Node}, ParentKey,
                         SNodeId} | RebalancePath], Tree4} =
                         bp_tree_path:find_with_sibling(Key, RootId, Tree3),
-                    {ok, RebalanceNode2} = bp_tree_node:remove(Key, Pred, RebalanceNode),
-                    rebalance_node(Key, RebalanceNodeId,
-                        RebalanceNode2, ParentKey, SNodeId, RebalancePath, Tree4);
+                    {Ans, Tree5} = rebalance_node(Key, NodeId,
+                        Node2, ParentKey, SNodeId, RebalancePath, Tree4),
+                    {Ans, rebalance_before_op(Tree5)};
                 _ ->
-                    put(rebalance_info, {Key, NodeId}),
-
-                    case Rebalanced of
-                        true ->
-                            {{ok, RootId}, Tree3} = bp_tree_store:get_root_id(Tree2),
-                            {[{NewNodeId, NewNode} | _], Tree4} = bp_tree_path:find(Key, RootId, Tree3),
-
-                            {ok, NewNode2} = bp_tree_node:remove(Key, Pred, NewNode),
-                            bp_tree_store:update_node(NewNodeId, NewNode2, Tree4);
-                        _ ->
-                            bp_tree_store:update_node(NodeId, Node2, Tree2)
-                    end
+                    put(rebalance_info, [{NodeId, Key} | proplists:delete(NodeId, RBI)]),
+                    bp_tree_store:update_node(NodeId, Node2, Tree2)
             end;
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
@@ -378,10 +372,15 @@ split_node(NodeId, Node, Tree, [{PNodeId, PNode} | PathTail]) ->
 -spec rebalance_node(key(), bp_tree_node:id(), tree_node(), key(),
     bp_tree_node:id(), bp_tree_path:path_with_sibling(), tree()) ->
     {ok | error(), tree()}.
+rebalance_node(Key, NodeId, Node, ParentKey, ?NIL, Path, Tree = #bp_tree{
+    order = Order
+}) ->
+    {ok, Tree};
 rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
     order = Order
 }) ->
     {{ok, SNode}, Tree2} = bp_tree_store:get_node(SNodeId, Tree),
+    % TODO - po poprzednim rebalance moze nie byc potrzeby (duzy bp_tree_node:size(Node))
     case bp_tree_node:size(Node) + bp_tree_node:size(SNode) >= 2*Order of
         true when Key =< ParentKey ->
             {NewPath, NewNodeId, Node2, Tree3} = rotate_nodes(Node, SNode,
