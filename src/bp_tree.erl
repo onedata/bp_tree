@@ -14,7 +14,7 @@
 -include("bp_tree.hrl").
 
 %% API exports
--export([init/0, init/1, terminate/1]).
+-export([init/0, init/1, terminate/1, update_store_state/2]).
 -export([find/2, insert/3, remove/2, remove/3, fold/3, fold/4]).
 -export([get_prev_leaf/2]).
 
@@ -61,13 +61,33 @@ init() ->
 %% @end
 %%--------------------------------------------------------------------
 -spec init([init_opt()]) -> {ok, tree()} | error().
+% TODO - przeladowanie dla add/delete i dla reszty
 init(Opts) ->
     Args = proplists:get_value(store_args, Opts, []),
     Tree = #bp_tree{
         order = proplists:get_value(order, Opts, 50),
         store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
     },
-    bp_tree_store:init(Args, Tree).
+
+    case bp_tree_store:init(Args, Tree) of
+        {ok, Tree2} ->
+            case bp_tree_store:get_root_id(Tree2) of
+                {{ok, RootId}, Tree3} ->
+                    {{ok, Node}, Tree4} =  bp_tree_store:get_node(RootId, Tree3),
+                    % Pobrac tu tez order
+                    RI = bp_tree_node:get_rebalance_info(Node),
+                    put(rebalance_info, RI),
+                    put(initial_rebalance_info, RI),
+                    {ok, Tree4};
+                _ ->
+                    {ok, Tree2}
+            end;
+        Error ->
+            Error
+    end.
+
+update_store_state(Fun, Tree = #bp_tree{store_state = SS}) ->
+    Tree#bp_tree{store_state = Fun(SS)}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -76,7 +96,32 @@ init(Opts) ->
 %%--------------------------------------------------------------------
 -spec terminate(tree()) -> any().
 terminate(Tree = #bp_tree{}) ->
-    bp_tree_store:terminate(Tree).
+    RI = case get(rebalance_info) of
+        [] ->
+            undefined;
+        Info ->
+            Info
+    end,
+    IRI = get(initial_rebalance_info),
+    Tree4 = case RI =:= IRI of
+        true ->
+            Tree;
+        _ ->
+            case bp_tree_store:get_root_id(Tree) of
+                {{ok, RootId}, Tree2} ->
+                    {{ok, Node}, Tree2} =  bp_tree_store:get_node(RootId, Tree),
+                    Node2 = bp_tree_node:set_rebalance_info(Node, RI),
+                    {ok, Tree3} = bp_tree_store:update_node(RootId, Node2, Tree2),
+                    Tree3;
+                _ ->
+                    Tree
+            end
+    end,
+
+    erase(rebalance_info),
+    erase(initial_rebalance_info),
+
+    bp_tree_store:terminate(Tree4).
 
 %%--------------------------------------------------------------------
 %% @doc
