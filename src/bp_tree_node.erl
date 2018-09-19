@@ -27,24 +27,13 @@
 -export([get_order/1, set_order/2]).
 
 -type id() :: any().
-
--export_type([id/0]).
+-type rebalance_info() :: undefined |
+    #{links_tree:id() => {bp_tree_node:id(), bp_tree:key()}}.
+-export_type([id/0, rebalance_info/0]).
 
 %%====================================================================
 %% API functions
 %%====================================================================
-
-get_rebalance_info(#bp_tree_node{rebalance_info = Info}) ->
-    Info.
-
-set_rebalance_info(Node, Info) ->
-    Node#bp_tree_node{rebalance_info = Info}.
-
-get_order(#bp_tree_node{order = Order}) ->
-    Order.
-
-set_order(Node, Order) ->
-    Node#bp_tree_node{order = Order}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -307,6 +296,15 @@ split(LNode = #bp_tree_node{leaf = false, children = Children}) ->
     RNode = #bp_tree_node{leaf = false, children = RChildren},
     {ok, LNode#bp_tree_node{children = LChildren}, Key, RNode}.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Moves values from a left sibling to a node until size of node is less than
+%% order.
+%% @end
+%%--------------------------------------------------------------------
+-spec rotate_right(bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node(),
+    non_neg_integer()) ->
+    {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
 rotate_right(LNode, ParentKey, RNode, Order) ->
     {LNode2, ParentKey2, RNode2} = Ans =
         rotate_right(LNode, ParentKey, RNode),
@@ -318,6 +316,78 @@ rotate_right(LNode, ParentKey, RNode, Order) ->
     end.
 
 %%--------------------------------------------------------------------
+%% @doc
+%% Moves values from a right sibling to a node until size of node is less than
+%% order.
+%% @end
+%%--------------------------------------------------------------------
+-spec rotate_left(bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node(),
+    non_neg_integer()) ->
+    {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
+rotate_left(LNode, ParentKey, RNode, Order) ->
+    {LNode2, ParentKey2, RNode2} = Ans =
+        rotate_left(LNode, ParentKey, RNode),
+    case ?MODULE:size(LNode2) < Order of
+        true ->
+            rotate_left(LNode2, ParentKey2, RNode2, Order);
+        _ ->
+            Ans
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Folds B+ tree node.
+%% @end
+%%--------------------------------------------------------------------
+-spec fold(bp_tree:fold_start_spec(), bp_tree:tree_node(),
+    bp_tree:fold_fun(), bp_tree:fold_acc()) -> bp_tree:fold_acc().
+fold(KeyOrPos, #bp_tree_node{children = LChildren}, Fun, Acc) ->
+    bp_tree_children:fold(KeyOrPos, LChildren, Fun, Acc).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets rebalance_info field.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_rebalance_info(bp_tree:tree_node()) -> rebalance_info().
+get_rebalance_info(#bp_tree_node{rebalance_info = Info}) ->
+    Info.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Sets rebalance_info field.
+%% @end
+%%--------------------------------------------------------------------
+-spec set_rebalance_info(bp_tree:tree_node(), rebalance_info()) ->
+    bp_tree:tree_node().
+set_rebalance_info(Node, Info) ->
+    Node#bp_tree_node{rebalance_info = Info}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets order field.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_order(bp_tree:tree_node()) -> undefined | non_neg_integer().
+get_order(#bp_tree_node{order = Order}) ->
+    Order.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Sets order field.
+%% @end
+%%--------------------------------------------------------------------
+-spec set_order(bp_tree:tree_node(), undefined | non_neg_integer()) ->
+    bp_tree:tree_node().
+set_order(Node, Order) ->
+    Node#bp_tree_node{order = Order}.
+
+%%====================================================================
+%% Internal functions
+%%====================================================================
+
+%%--------------------------------------------------------------------
+%% @private
 %% @doc
 %% Moves maximum value from a left sibling to a node.
 %% @end
@@ -348,17 +418,8 @@ rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
         RNode#bp_tree_node{children = RChildren2}
     }.
 
-rotate_left(LNode, ParentKey, RNode, Order) ->
-    {LNode2, ParentKey2, RNode2} = Ans =
-        rotate_left(LNode, ParentKey, RNode),
-    case ?MODULE:size(LNode2) < Order of
-        true ->
-            rotate_left(LNode2, ParentKey2, RNode2, Order);
-        _ ->
-            Ans
-    end.
-
 %%--------------------------------------------------------------------
+%% @private
 %% @doc
 %% Moves minimum value from a right sibling to a node.
 %% @end
@@ -388,13 +449,3 @@ rotate_left(LNode = #bp_tree_node{leaf = false, children = LChildren},
         Key,
         RNode#bp_tree_node{children = RChildren2}
     }.
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Folds B+ tree node.
-%% @end
-%%--------------------------------------------------------------------
--spec fold(bp_tree:fold_start_spec(), bp_tree:tree_node(),
-    bp_tree:fold_fun(), bp_tree:fold_acc()) -> bp_tree:fold_acc().
-fold(KeyOrPos, #bp_tree_node{children = LChildren}, Fun, Acc) ->
-    bp_tree_children:fold(KeyOrPos, LChildren, Fun, Acc).

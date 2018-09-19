@@ -26,8 +26,7 @@
     leaf :: boolean(),
     children :: bp_tree_children:children(),
     order :: undefined | non_neg_integer(),
-    rebalance_info :: undefined |
-        #{links_tree:id() => {bp_tree_node:id(), bp_tree:key()}}
+    rebalance_info :: bp_tree_node:rebalance_info()
 }).
 
 -endif.

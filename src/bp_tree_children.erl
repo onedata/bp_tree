@@ -357,10 +357,18 @@ split(#bp_tree_children{data = Tree, max_size = MaxSize} = Children) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec merge(children(), children()) -> children().
-merge(#bp_tree_children{data = LTree}, #bp_tree_children{data = RTree} = Children) ->
-    LList = gb_trees:to_list(LTree),
-    RList = gb_trees:to_list(RTree),
-    Children#bp_tree_children{data = gb_trees:from_orddict(LList ++ RList)}.
+merge(#bp_tree_children{data = LTree},
+    #bp_tree_children{data = RTree} = Children) ->
+    case {gb_trees:is_empty(LTree), gb_trees:is_empty(LTree)} of
+        {true, _} ->
+            Children;
+        {_, true} ->
+            Children#bp_tree_children{data = LTree};
+        _ ->
+            LList = gb_trees:to_list(LTree),
+            RList = gb_trees:to_list(RTree),
+            Children#bp_tree_children{data = gb_trees:from_orddict(LList ++ RList)}
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
