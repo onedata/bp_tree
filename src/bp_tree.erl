@@ -25,7 +25,8 @@
 -type order() :: pos_integer().
 -type init_opt() :: {order, order()} |
                     {store_module, module()} |
-                    {store_args, bp_tree_store:args()}.
+                    {store_args, bp_tree_store:args()} |
+                    {read_only, boolean()}.
 -type remove_pred() :: fun((value()) -> boolean()).
 -type fold_init() :: {start_key, key()} |
                      {prev_key, key()} |
