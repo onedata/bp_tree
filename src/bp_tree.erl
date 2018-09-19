@@ -74,11 +74,19 @@ init(Opts) ->
             case bp_tree_store:get_root_id(Tree2) of
                 {{ok, RootId}, Tree3} ->
                     {{ok, Node}, Tree4} =  bp_tree_store:get_node(RootId, Tree3),
-                    % Pobrac tu tez order
+
                     RI = bp_tree_node:get_rebalance_info(Node),
                     put(rebalance_info, RI),
                     put(initial_rebalance_info, RI),
-                    {ok, Tree4};
+                    put(initial_root_id, RootId),
+
+                    Order = bp_tree_node:get_order(Node),
+                    case Order of
+                        undefined ->
+                            {ok, Tree4};
+                        _ ->
+                            {ok, Tree4#bp_tree{order = Order}}
+                    end;
                 _ ->
                     {ok, Tree2}
             end;
@@ -95,7 +103,7 @@ update_store_state(Fun, Tree = #bp_tree{store_state = SS}) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec terminate(tree()) -> any().
-terminate(Tree = #bp_tree{}) ->
+terminate(Tree = #bp_tree{order = Order}) ->
     RI = case get(rebalance_info) of
         [] ->
             undefined;
@@ -103,16 +111,43 @@ terminate(Tree = #bp_tree{}) ->
             Info
     end,
     IRI = get(initial_rebalance_info),
-    Tree4 = case RI =:= IRI of
+    InitRootId = get(initial_root_id),
+
+    Tree8 = case (RI =:= IRI) and (InitRootId =:= undefined) of
         true ->
             Tree;
         _ ->
             case bp_tree_store:get_root_id(Tree) of
                 {{ok, RootId}, Tree2} ->
-                    {{ok, Node}, Tree2} =  bp_tree_store:get_node(RootId, Tree),
-                    Node2 = bp_tree_node:set_rebalance_info(Node, RI),
-                    {ok, Tree3} = bp_tree_store:update_node(RootId, Node2, Tree2),
-                    Tree3;
+                    Tree5 = case RI =:= IRI of
+                        true ->
+                            Tree2;
+                        _ ->
+                            {{ok, Node}, Tree3} =  bp_tree_store:get_node(RootId, Tree2),
+                            Node2 = bp_tree_node:set_rebalance_info(Node, RI),
+                            Node3 = bp_tree_node:set_order(Node2, Order),
+                            {ok, Tree4} = bp_tree_store:update_node(RootId, Node3, Tree3),
+                            Tree4
+                    end,
+
+                    case InitRootId of
+                        undefined ->
+                            Tree5;
+                        RootId ->
+                            Tree5;
+                        _ ->
+                            case bp_tree_store:get_node(InitRootId, Tree5) of
+                                {{ok, InitNode}, Tree6} ->
+                                    InitNode2 =
+                                        bp_tree_node:set_rebalance_info(InitNode, undefined),
+                                    InitNode3 = bp_tree_node:set_order(InitNode2, undefined),
+                                    {ok, Tree7} =
+                                        bp_tree_store:update_node(InitRootId, InitNode3, Tree6),
+                                    Tree7;
+                                {_, Tree6} ->
+                                    Tree6
+                            end
+                    end;
                 _ ->
                     Tree
             end
@@ -120,8 +155,9 @@ terminate(Tree = #bp_tree{}) ->
 
     erase(rebalance_info),
     erase(initial_rebalance_info),
+    erase(initial_root_id),
 
-    bp_tree_store:terminate(Tree4).
+    bp_tree_store:terminate(Tree8).
 
 %%--------------------------------------------------------------------
 %% @doc

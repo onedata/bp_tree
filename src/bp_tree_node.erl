@@ -24,6 +24,7 @@
 -export([rotate_right/4, rotate_left/4]).
 -export([fold/4]).
 -export([get_rebalance_info/1, set_rebalance_info/2]).
+-export([get_order/1, set_order/2]).
 
 -type id() :: any().
 
@@ -38,6 +39,12 @@ get_rebalance_info(#bp_tree_node{rebalance_info = Info}) ->
 
 set_rebalance_info(Node, Info) ->
     Node#bp_tree_node{rebalance_info = Info}.
+
+get_order(#bp_tree_node{order = Order}) ->
+    Order.
+
+set_order(Node, Order) ->
+    Node#bp_tree_node{order = Order}.
 
 %%--------------------------------------------------------------------
 %% @doc
