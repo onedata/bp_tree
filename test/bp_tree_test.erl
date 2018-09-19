@@ -32,6 +32,9 @@ new_should_use_custom_options_test_() ->
             meck:new(StoreModule, [non_strict]),
             meck:expect(StoreModule, init, fun(Args) when Args =:= StoreArgs ->
                 {ok, state}
+            end),
+            meck:expect(StoreModule, get_root_id, fun(State) ->
+                {{error, not_found}, State}
             end)
         end,
         fun(_) ->

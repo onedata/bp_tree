@@ -87,8 +87,8 @@ init(Opts) ->
                         _ ->
                             {ok, Tree4#bp_tree{order = Order}}
                     end;
-                _ ->
-                    {ok, Tree2}
+                {_, Tree3} ->
+                    {ok, Tree3}
             end;
         Error ->
             Error
