@@ -15,7 +15,7 @@
 
 %% API exports
 -export([init/0, init/1, terminate/1, update_store_state/2]).
--export([find/2, insert/3, remove/2, remove/3, fold/3, fold/4]).
+-export([find/2, insert/3, remove/2, fold/3, fold/4]).
 -export([get_prev_leaf/2]).
 
 -type key() :: term().
@@ -214,27 +214,37 @@ insert(Key, Value, #bp_tree{order = Order} = Tree0) ->
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree0)
     end.
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Removes key and associated value from a B+ tree.
-%% @end
-%%--------------------------------------------------------------------
--spec remove(key(), tree()) -> {ok | error() | error_stacktrace(), tree()}.
-remove(Key, Tree = #bp_tree{}) ->
-    remove(Key, fun(_) -> true end, Tree).
+%%%%--------------------------------------------------------------------
+%%%% @doc
+%%%% Removes key and associated value from a B+ tree.
+%%%% @end
+%%%%--------------------------------------------------------------------
+%%-spec remove(key(), tree()) -> {ok | error() | error_stacktrace(), tree()}.
+%%remove(Key, Tree = #bp_tree{}) ->
+%%    remove(Key, fun(_) -> true end, Tree).
+%%
+%%%%--------------------------------------------------------------------
+%%%% @doc
+%%%% Removes key and associated value from a B+ tree if predicate is satisfied.
+%%%% @end
+%%%%--------------------------------------------------------------------
+%%-spec remove(key(), remove_pred(), tree()) ->
+%%    {ok | error() | error_stacktrace(), tree()}.
+%%remove(Key, Predicate, Tree = #bp_tree{}) ->
+%%    try
+%%        {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
+%%        {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
+%%        remove(Key, Predicate, Path, ?NIL, Tree3)
+%%    catch
+%%        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+%%    end.
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Removes key and associated value from a B+ tree if predicate is satisfied.
-%% @end
-%%--------------------------------------------------------------------
--spec remove(key(), remove_pred(), tree()) ->
-    {ok | error() | error_stacktrace(), tree()}.
-remove(Key, Predicate, Tree = #bp_tree{}) ->
+
+remove([{Key, _} | _] = Items, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
         {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
-        remove(Key, Predicate, Path, ?NIL, Tree3)
+        remove(Items, Path, ?NIL, Tree3)
     catch
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
     end.
@@ -352,11 +362,11 @@ insert(Key, Value, [{NodeId, Node} | Path], Tree = #bp_tree{order = Order}) ->
 %% path with a sibling.
 %% @end
 %%--------------------------------------------------------------------
--spec remove(key(), remove_pred(), bp_tree_path:path() | bp_tree_path:path_with_sibling(),
-    bp_tree_node:id(), tree()) -> {ok | error(), tree()}.
-remove(Key, Pred, [{NodeId, Node}], ChildId, Tree) ->
-    {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
-    case {bp_tree_node:size(Node2), ChildId} of
+%%-spec remove(key(), remove_pred(), bp_tree_path:path() | bp_tree_path:path_with_sibling(),
+%%    bp_tree_node:id(), tree()) -> {ok | error(), tree()}.
+remove(Items, [{NodeId, Node}], ChildId, Tree) ->
+    {ok, Node2, RemovedKeys} = bp_tree_node:remove(Items, Node),
+    Ans = case {bp_tree_node:size(Node2), ChildId} of
         {0, ?NIL} ->
             {ok, Tree2} = bp_tree_store:delete_node(NodeId, Tree),
             bp_tree_store:unset_root_id(Tree2);
@@ -365,11 +375,17 @@ remove(Key, Pred, [{NodeId, Node}], ChildId, Tree) ->
             bp_tree_store:set_root_id(ChildId, Tree2);
         _ ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
+    end,
+    case Ans of
+        {ok, Tree3} ->
+            {ok, RemovedKeys, Tree3};
+        Error ->
+            Error
     end;
-remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
-    {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
+remove([{Key, _} | _] = Items, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
+    {ok, Node2, RemovedKeys} = bp_tree_node:remove(Items, Node),
     Size = bp_tree_node:size(Node2),
-    case Size < Order of
+    FinalAns = case Size < Order of
         true ->
             Tree2 = Tree,
 
@@ -394,18 +410,30 @@ remove(Key, Pred, [{NodeId, Node} | _], _, Tree = #bp_tree{order = Order}) ->
             end;
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
+    end,
+    case FinalAns of
+        {ok, Tree6} ->
+            {ok, RemovedKeys, Tree6};
+        Error ->
+            Error
     end;
-remove(Key, Pred, [{{NodeId, Node}, ?NIL, ?NIL}], ChildId, Tree) ->
-    remove(Key, Pred, [{NodeId, Node}], ChildId, Tree);
-remove(Key, Pred, [{{NodeId, Node}, ParentKey, SNodeId} | Path], _,
+remove(Items, [{{NodeId, Node}, ?NIL, ?NIL}], ChildId, Tree) ->
+    remove(Items, [{NodeId, Node}], ChildId, Tree);
+remove([{Key, _} | _] = Items, [{{NodeId, Node}, ParentKey, SNodeId} | Path], _,
     Tree = #bp_tree{order = Order}
 ) ->
-    {ok, Node2} = bp_tree_node:remove(Key, Pred, Node),
-    case bp_tree_node:size(Node2) < Order of
+    {ok, Node2, RemovedKeys} = bp_tree_node:remove(Items, Node),
+    Ans = case bp_tree_node:size(Node2) < Order of
         true ->
             rebalance_node(Key, NodeId, Node2, ParentKey, SNodeId, Path, Tree);
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
+    end,
+    case Ans of
+        {ok, Tree2} ->
+            {ok, RemovedKeys, Tree2};
+        Error ->
+            Error
     end.
 
 %%--------------------------------------------------------------------
@@ -461,13 +489,27 @@ rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
                 merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree2, Path),
             Tree4 = update_sibling_smaller_key(NewPath, NewNodeId, Key, Tree3,
                 NewNodeId, Node2#bp_tree_node.leaf),
-            remove(ParentKey, fun(_) -> true end, NewPath, NewNodeId, Tree4);
+            Ans = remove([{ParentKey, fun(_) -> true end}], NewPath, NewNodeId,
+                Tree4),
+            case Ans of
+                {ok, _, Tree5} ->
+                    {ok, Tree5};
+                Error ->
+                    Error
+            end;
         false ->
             {NewPath, NewNodeId, Node2, Tree3} =
                 merge_nodes(SNode, Node, SNodeId, NodeId, ParentKey, Tree2, Path),
             Tree4 = update_sibling_greater_key(NewPath, NewNodeId, Key, Tree3,
                 NewNodeId, Node2#bp_tree_node.leaf),
-            remove(ParentKey, fun(_) -> true end, NewPath, NewNodeId, Tree4);
+            Ans = remove([{ParentKey, fun(_) -> true end}], NewPath, NewNodeId,
+                Tree4),
+            case Ans of
+                {ok, _, Tree5} ->
+                    {ok, Tree5};
+                Error ->
+                    Error
+            end;
         _ ->
             case Size < Order of
                 true when Key =< ParentKey ->
@@ -500,7 +542,7 @@ merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree,
     [{{PNodeId, PNode}, P1, P2} | PathTail]) ->
     Node2 = bp_tree_node:merge(Node, ParentKey, SNode),
     {{ok, NewNodeId}, Tree2} = bp_tree_store:create_node(Node2, Tree),
-    {ok, PNode2} = bp_tree_node:remove(ParentKey, fun(_) -> true end, PNode),
+    {ok, PNode2, _} = bp_tree_node:remove([{ParentKey, fun(_) -> true end}], PNode),
     {ok, PNode3} = bp_tree_node:insert(ParentKey, {NewNodeId, SNodeId}, PNode2),
     {ok, Tree3} = bp_tree_store:update_node(PNodeId, PNode3, Tree2),
     {ok, Tree4} = bp_tree_store:delete_node(SNodeId, Tree3),
@@ -534,7 +576,7 @@ rotate_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree, Path, Rotation, Orde
     {{ok, NewNodeId}, Tree3} = bp_tree_store:create_node(Node3, Tree2),
 
     [{{PNodeId, PNode}, P1, P2} | PathTail] = Path,
-    {ok, PNode2} = bp_tree_node:remove(ParentKey, fun(_) -> true end, PNode),
+    {ok, PNode2, _} = bp_tree_node:remove([{ParentKey, fun(_) -> true end}], PNode),
     {ok, PNode3} = bp_tree_node:insert(ParentKey2, {NewNodeId, NewSNodeId}, PNode2),
     {ok, Tree4} = bp_tree_store:update_node(PNodeId, PNode3, Tree3),
 
@@ -714,7 +756,6 @@ rebalance(Tree0) ->
             Tree0;
         RBI ->
             Tree5 = lists:foldl(fun({_NodeId, Key}, Tree) ->
-                % Wiele razy pobieramy to samo np root_id
                 {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
                 {[{{RebalanceNodeId, RebalanceNode}, ParentKey,
                     SNodeId} | RebalancePath], Tree3} =
