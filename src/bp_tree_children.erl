@@ -302,10 +302,24 @@ remove({Selector, Key}, #bp_tree_children{} = Children) ->
 %% Removes a key and associated value if predicate is satisfied.
 %% @end
 %%--------------------------------------------------------------------
--spec remove({selector(), key()}, remove_pred(), children()) ->
-    {ok, children()} | {error, term()}.
+%%-spec remove({selector(), key()}, remove_pred(), children()) ->
+%%    {ok, children()} | {error, term()}.
 remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children) ->
     It = gb_trees:iterator_from(Key, Tree),
+    case get(next_ops) of
+        undefined ->
+            {Ans, NextOpsFinished} = remove({Selector, Key}, Pred, Children, It,
+                []),
+            Ans;
+        NextOps ->
+            {Ans, NextOpsFinished} = remove({Selector, Key}, Pred, Children, It,
+                NextOps),
+            erase(next_ops),
+            put(next_ops_finished, NextOpsFinished),
+            Ans
+    end.
+
+remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children, It, NextOps) ->
     case gb_trees:next(It) of
         {Key, Value, It2} ->
             case Pred(Value) of
@@ -313,22 +327,36 @@ remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children) ->
                     Tree2 = gb_trees:delete(Key, Tree),
                     case Selector of
                         left ->
-                            {ok, Children#bp_tree_children{data = Tree2}};
+                            Children2 = Children#bp_tree_children{data = Tree2},
+
+                            case NextOps of
+                                [{NextKey, _} | NextTail] ->
+                                    case remove({Selector, NextKey}, Pred,
+                                        Children2, It2, NextTail) of
+                                        {{ok, Children3}, NextOpsFinished} ->
+                                            {{ok, Children3}, [NextKey | NextOpsFinished]};
+                                        _ ->
+                                            {{ok, Children2}, []}
+                                    end;
+                                _ ->
+                                    {{ok, Children2}, []}
+                            end;
                         right ->
                             case gb_trees:next(It2) of
                                 {Key2, _, _} ->
                                     Tree3 = gb_trees:enter(Key2, Value, Tree2),
-                                    {ok, Children#bp_tree_children{data = Tree3}};
+                                    {{ok, Children#bp_tree_children{data = Tree3}},
+                                        []};
                                 _ ->
-                                    {ok, Children#bp_tree_children{data = Tree2,
-                                        last_value = Value}}
+                                    {{ok, Children#bp_tree_children{data = Tree2,
+                                        last_value = Value}}, []}
                             end
                     end;
                 false ->
-                    {error, predicate_not_satisfied}
+                    {{error, predicate_not_satisfied}, []}
             end;
         _ ->
-            {error, not_found}
+            {{error, not_found}, []}
     end.
 
 %%--------------------------------------------------------------------
