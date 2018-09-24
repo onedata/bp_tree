@@ -15,7 +15,7 @@
 
 %% API exports
 -export([init/0, init/1, terminate/1, update_store_state/2]).
--export([find/2, insert/3, remove/2, fold/3, fold/4]).
+-export([find/2, insert/2, remove/2, fold/3, fold/4]).
 -export([get_prev_leaf/2]).
 
 -type key() :: term().
@@ -194,21 +194,21 @@ find(Key, Tree = #bp_tree{}) ->
 %% Inserts a key-value pair into a B+ tree.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(key(), value(), tree()) ->
-    {ok | error() | error_stacktrace(), tree()}.
-insert(Key, Value, #bp_tree{order = Order} = Tree0) ->
+%%-spec insert(key(), value(), tree()) ->
+%%    {ok | error() | error_stacktrace(), tree()}.
+insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
     try
         Tree = rebalance(Tree0),
         case bp_tree_store:get_root_id(Tree) of
             {{ok, RootId}, Tree2} ->
                 {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
-                insert(Key, Value, Path, Tree3);
+                insert(Items, Path, Tree3);
             {{error, not_found}, Tree2} ->
                 Root = bp_tree_node:new(true, Order),
                 {{ok, RootId}, Tree3} = bp_tree_store:create_node(Root, Tree2),
                 {ok, Tree4} = bp_tree_store:set_root_id(RootId, Tree3),
                 {Path, Tree5} = bp_tree_path:find(Key, RootId, Tree4),
-                insert(Key, Value, Path, Tree5)
+                insert(Items, Path, Tree5)
         end
     catch
         _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree0)
@@ -337,22 +337,36 @@ get_prev_leaf({key, Key}, Tree) ->
 %% pair into next node on path.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(key(), value(), bp_tree_path:path(), tree()) ->
-    {ok | error(), tree()}.
-insert(Key, Value, [], #bp_tree{order = Order} = Tree) ->
+%%-spec insert(key(), value(), bp_tree_path:path(), tree()) ->
+%%    {ok | error(), tree()}.
+insert(Items, [], #bp_tree{order = Order} = Tree) ->
     Root = bp_tree_node:new(false, Order),
-    {ok, Root2} = bp_tree_node:insert(Key, Value, Root),
+    {ok, Root2, AddedKeys} = bp_tree_node:insert(Items, Root, 2 * Order),
     {{ok, RootId}, Tree2} = bp_tree_store:create_node(Root2, Tree),
-    bp_tree_store:set_root_id(RootId, Tree2);
-insert(Key, Value, [{NodeId, Node} | Path], Tree = #bp_tree{order = Order}) ->
-    {ok, Node2} = bp_tree_node:insert(Key, Value, Node),
-    case bp_tree_node:size(Node2) > 2 * Order of
+    Ans = bp_tree_store:set_root_id(RootId, Tree2),
+    case Ans of
+        {ok, Tree3} ->
+            {ok, AddedKeys, Tree3};
+        Error ->
+            Error
+    end;
+insert(Items, [{NodeId, Node} | Path], Tree = #bp_tree{order = Order}) ->
+    {ok, Node2, AddedKeys} = bp_tree_node:insert(Items, Node, 2 * Order + 1),
+    Ans = case bp_tree_node:size(Node2) > 2 * Order of
         true ->
             {{Key2, NewNodeId, RNodeId}, Tree2} =
                 split_node(NodeId, Node2, Tree, Path),
-            insert(Key2, {NewNodeId, RNodeId}, Path, Tree2);
+            insert([{Key2, {NewNodeId, RNodeId}}], Path, Tree2);
         false ->
             bp_tree_store:update_node(NodeId, Node2, Tree)
+    end,
+    case Ans of
+        {ok, Tree3} ->
+            {ok, AddedKeys, Tree3};
+        {ok, _, Tree3} ->
+            {ok, AddedKeys, Tree3};
+        Error ->
+            Error
     end.
 
 %%--------------------------------------------------------------------
@@ -459,7 +473,8 @@ split_node(NodeId, Node, Tree, [{PNodeId, PNode} | PathTail]) ->
     {{ok, NewNodeId}, Tree3} = bp_tree_store:create_node(LNode2, Tree2),
     {ok, Tree4} = bp_tree_store:delete_node(NodeId, Tree3),
 
-    {ok, PNode2} = bp_tree_node:insert(Key2, {NewNodeId, RNodeId}, PNode),
+    {ok, PNode2, _} = bp_tree_node:insert([{Key2, {NewNodeId, RNodeId}}], PNode,
+        undefined),
     NewPath = [{PNodeId, PNode2} | PathTail],
     Tree5 = update_sibling_smaller_key(NewPath, NewNodeId, Key2, Tree4,
       NewNodeId, LNode2#bp_tree_node.leaf),
@@ -543,7 +558,8 @@ merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree,
     Node2 = bp_tree_node:merge(Node, ParentKey, SNode),
     {{ok, NewNodeId}, Tree2} = bp_tree_store:create_node(Node2, Tree),
     {ok, PNode2, _} = bp_tree_node:remove([{ParentKey, fun(_) -> true end}], PNode),
-    {ok, PNode3} = bp_tree_node:insert(ParentKey, {NewNodeId, SNodeId}, PNode2),
+    {ok, PNode3, _} = bp_tree_node:insert([{ParentKey, {NewNodeId, SNodeId}}],
+        PNode2, undefined),
     {ok, Tree3} = bp_tree_store:update_node(PNodeId, PNode3, Tree2),
     {ok, Tree4} = bp_tree_store:delete_node(SNodeId, Tree3),
     {ok, Tree5} = bp_tree_store:delete_node(NodeId, Tree4),
@@ -577,7 +593,8 @@ rotate_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree, Path, Rotation, Orde
 
     [{{PNodeId, PNode}, P1, P2} | PathTail] = Path,
     {ok, PNode2, _} = bp_tree_node:remove([{ParentKey, fun(_) -> true end}], PNode),
-    {ok, PNode3} = bp_tree_node:insert(ParentKey2, {NewNodeId, NewSNodeId}, PNode2),
+    {ok, PNode3, _} = bp_tree_node:insert([{ParentKey2, {NewNodeId, NewSNodeId}}],
+        PNode2, undefined),
     {ok, Tree4} = bp_tree_store:update_node(PNodeId, PNode3, Tree3),
 
     {ok, Tree5} = bp_tree_store:delete_node(SNodeId, Tree4),

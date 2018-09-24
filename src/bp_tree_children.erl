@@ -222,23 +222,35 @@ lower_bound(Key, #bp_tree_children{data = Tree}) ->
 %% Inserts a key-value pair.
 %% @end
 %%--------------------------------------------------------------------
--spec insert({selector(), key()}, value() | {value(), value()}, children()) ->
-    {ok, children()} | {error, out_of_space | already_exists}.
-insert({Selector, Key}, Value0, #bp_tree_children{data = Tree} = Children) ->
+%%-spec insert({selector(), key()}, value() | {value(), value()}, children()) ->
+%%    {ok, children()} | {error, out_of_space | already_exists}.
+insert({Selector, [{Key, Value} | Tail]},
+    #bp_tree_children{data = Tree} = Children, MaxSize) ->
     It = gb_trees:iterator_from(Key, Tree),
+    insert({Selector, Key}, Value, Children, MaxSize, It, Tail).
+
+insert({Selector, Key}, Value0, #bp_tree_children{data = Tree, last_value = LV}
+    = Children, MaxSize, It, NextItems) ->
     case gb_trees:next(It) of
         {Key, _OldValue, _} ->
             {error, already_exists};
-        {NextKey, _, _} ->
+        {ExistingKey, _, _} ->
             case Selector of
                 both ->
                     {Value, NextValue} = Value0,
                     Tree2 = gb_trees:insert(Key, Value, Tree),
-                    Tree3 = gb_trees:enter(NextKey, NextValue, Tree2),
-                    {ok, Children#bp_tree_children{data = Tree3}};
+                    Tree3 = gb_trees:enter(ExistingKey, NextValue, Tree2),
+                    {ok, Children#bp_tree_children{data = Tree3}, [Key]};
                 _ ->
                     Tree2 = gb_trees:insert(Key, Value0, Tree),
-                    {ok, Children#bp_tree_children{data = Tree2}}
+                    {Tree3, AddedKeys} = case LV of
+                        ?NIL ->
+                            add_until(Tree2, MaxSize, NextItems, [Key], ?NIL);
+                        _ ->
+                            {LargestKey, _} = gb_trees:largest(Tree),
+                            add_until(Tree2, MaxSize, NextItems, [Key], LargestKey)
+                    end,
+                    {ok, Children#bp_tree_children{data = Tree3}, AddedKeys}
             end;
         none ->
             case Selector of
@@ -246,12 +258,35 @@ insert({Selector, Key}, Value0, #bp_tree_children{data = Tree} = Children) ->
                     {Value, NextValue} = Value0,
                     Tree2 = gb_trees:insert(Key, Value, Tree),
                     {ok, Children#bp_tree_children{data = Tree2,
-                        last_value = NextValue}};
+                        last_value = NextValue}, [Key]};
                 _ ->
                     Tree2 = gb_trees:insert(Key, Value0, Tree),
-                    {ok, Children#bp_tree_children{data = Tree2}}
+                    {Tree3, AddedKeys} = case LV of
+                        ?NIL -> add_until(Tree2, MaxSize, NextItems, [Key], ?NIL);
+                        _ -> {Tree2, [Key]}
+                    end,
+                    {ok, Children#bp_tree_children{data = Tree3}, AddedKeys}
             end
     end.
+
+add_until(Tree, MaxSize, [{NextKey, NextValue} | NextTail], AddedKeys,
+    LastKey) when NextKey < LastKey ; LastKey =:= ?NIL ->
+    case (MaxSize =:= undefined) orelse (gb_trees:size(Tree) < MaxSize) of
+        true ->
+            try
+                Tree2 = gb_trees:insert(NextKey, NextValue, Tree),
+                add_until(Tree2, MaxSize, NextTail, [NextKey | AddedKeys], LastKey)
+            catch
+                _:_ ->
+                    % Already exists
+                    {Tree, AddedKeys}
+            end;
+        _ ->
+            {Tree, AddedKeys}
+    end;
+add_until(Tree, _MaxSize, _, AddedKeys, _) ->
+    {Tree, AddedKeys}.
+
 
 %%--------------------------------------------------------------------
 %% @doc

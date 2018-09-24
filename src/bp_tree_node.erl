@@ -230,16 +230,18 @@ lower_bound(Key, #bp_tree_node{leaf = true, children = Children}) ->
 %% Inserts key-value pair into a node.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(bp_tree:key(), bp_tree:value(), bp_tree:tree_node()) ->
-    {ok, bp_tree:tree_node()} | {error, term()}.
-insert(Key, Value, Node = #bp_tree_node{leaf = true, children = Children}) ->
-    case bp_tree_children:insert({left, Key}, Value, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
+%%-spec insert(bp_tree:key(), bp_tree:value(), bp_tree:tree_node()) ->
+%%    {ok, bp_tree:tree_node()} | {error, term()}.
+insert(Items, Node = #bp_tree_node{leaf = true, children = Children}, MaxSize) ->
+    case bp_tree_children:insert({left, Items}, Children, MaxSize) of
+        {ok, Children2, AddedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, AddedKeys};
         {error, Reason} -> {error, Reason}
     end;
-insert(Key, Value, Node = #bp_tree_node{leaf = false, children = Children}) ->
-    case bp_tree_children:insert({both, Key}, Value, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
+insert(Items, Node = #bp_tree_node{leaf = false, children = Children}, MaxSize) ->
+    case bp_tree_children:insert({both, Items}, Children, MaxSize) of
+        {ok, Children2, AddedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, AddedKeys};
         {error, Reason} -> {error, Reason}
     end.
 
