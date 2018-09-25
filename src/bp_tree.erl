@@ -191,11 +191,11 @@ find(Key, Tree = #bp_tree{}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Inserts a key-value pair into a B+ tree.
+%% Inserts a key-value pairs into a B+ tree.
 %% @end
 %%--------------------------------------------------------------------
-%%-spec insert(key(), value(), tree()) ->
-%%    {ok | error() | error_stacktrace(), tree()}.
+-spec insert([{key(), value()}], tree()) ->
+    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
 insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
     try
         Tree = rebalance(Tree0),
@@ -216,30 +216,11 @@ insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
 
 %%%%--------------------------------------------------------------------
 %%%% @doc
-%%%% Removes key and associated value from a B+ tree.
+%%%% Removes keys and associated values from a B+ tree if predicates are satisfied.
 %%%% @end
 %%%%--------------------------------------------------------------------
-%%-spec remove(key(), tree()) -> {ok | error() | error_stacktrace(), tree()}.
-%%remove(Key, Tree = #bp_tree{}) ->
-%%    remove(Key, fun(_) -> true end, Tree).
-%%
-%%%%--------------------------------------------------------------------
-%%%% @doc
-%%%% Removes key and associated value from a B+ tree if predicate is satisfied.
-%%%% @end
-%%%%--------------------------------------------------------------------
-%%-spec remove(key(), remove_pred(), tree()) ->
-%%    {ok | error() | error_stacktrace(), tree()}.
-%%remove(Key, Predicate, Tree = #bp_tree{}) ->
-%%    try
-%%        {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
-%%        {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
-%%        remove(Key, Predicate, Path, ?NIL, Tree3)
-%%    catch
-%%        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
-%%    end.
-
-
+-spec remove([{key(), remove_pred()}], tree()) ->
+    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
 remove([{Key, _} | _] = Items, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
@@ -332,13 +313,13 @@ get_prev_leaf({key, Key}, Tree) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Inserts a key-value pair into a B+ tree along the provided leaf-root path.
+%% Inserts a key-value pairs into a B+ tree along the provided leaf-root path.
 %% Stops when insert does not cause node split, otherwise inserts new key-value
 %% pair into next node on path.
 %% @end
 %%--------------------------------------------------------------------
-%%-spec insert(key(), value(), bp_tree_path:path(), tree()) ->
-%%    {ok | error(), tree()}.
+-spec insert([{key(), value()}], bp_tree_path:path(), tree()) ->
+    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
 insert(Items, [], #bp_tree{order = Order} = Tree) ->
     Root = bp_tree_node:new(false, Order),
     {ok, Root2, AddedKeys} = bp_tree_node:insert(Items, Root, 2 * Order),
@@ -372,12 +353,13 @@ insert(Items, [{NodeId, Node} | Path], Tree = #bp_tree{order = Order}) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Removes key and associated value from a B+ tree along the provided leaf-root
+%% Removes keys and associated values from a B+ tree along the provided leaf-root
 %% path with a sibling.
 %% @end
 %%--------------------------------------------------------------------
-%%-spec remove(key(), remove_pred(), bp_tree_path:path() | bp_tree_path:path_with_sibling(),
-%%    bp_tree_node:id(), tree()) -> {ok | error(), tree()}.
+-spec remove([{key(), remove_pred()}], bp_tree_path:path() |
+    bp_tree_path:path_with_sibling(), bp_tree_node:id(), tree()) ->
+    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
 remove(Items, [{NodeId, Node}], ChildId, Tree) ->
     {ok, Node2, RemovedKeys} = bp_tree_node:remove(Items, Node),
     Ans = case {bp_tree_node:size(Node2), ChildId} of

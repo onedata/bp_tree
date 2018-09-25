@@ -35,5 +35,5 @@ find_next_should_return_leaf_containing_next_key_test() ->
 insert([], Tree) ->
     Tree;
 insert([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:insert(X, X, Tree),
+    {ok, [X], Tree2} = bp_tree:insert([{X, X}], Tree),
     insert(Seq, Tree2).

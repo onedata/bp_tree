@@ -230,8 +230,9 @@ lower_bound(Key, #bp_tree_node{leaf = true, children = Children}) ->
 %% Inserts key-value pair into a node.
 %% @end
 %%--------------------------------------------------------------------
-%%-spec insert(bp_tree:key(), bp_tree:value(), bp_tree:tree_node()) ->
-%%    {ok, bp_tree:tree_node()} | {error, term()}.
+-spec insert([{bp_tree:key(), bp_tree:value()}], bp_tree:tree_node(),
+    non_neg_integer() | undefined) ->
+    {ok, bp_tree:tree_node(), [bp_tree:key()]} | {error, term()}.
 insert(Items, Node = #bp_tree_node{leaf = true, children = Children}, MaxSize) ->
     case bp_tree_children:insert({left, Items}, Children, MaxSize) of
         {ok, Children2, AddedKeys} ->
@@ -250,8 +251,8 @@ insert(Items, Node = #bp_tree_node{leaf = false, children = Children}, MaxSize) 
 %% Removes key and associated value from a node.
 %% @end
 %%--------------------------------------------------------------------
-%%-spec remove(bp_tree:key(), bp_tree:remove_pred(), bp_tree:tree_node()) ->
-%%    {ok, bp_tree:tree_node()} | {error, term()}.
+-spec remove([{bp_tree:key(), bp_tree:remove_pred()}], bp_tree:tree_node()) ->
+    {ok, bp_tree:tree_node(), [bp_tree:key()]} | {error, term()}.
 remove(Items, Node = #bp_tree_node{leaf = true, children = Children}) ->
     case bp_tree_children:remove({left, Items}, Children) of
         {ok, Children2, RemovedKeys} ->
