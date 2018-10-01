@@ -84,7 +84,7 @@ init(Opts) ->
                     Order = bp_tree_node:get_order(Node),
                     case Order of
                         undefined ->
-                            {ok, Tree4};
+                            {ok, Tree4#bp_tree{order = 128}};
                         _ ->
                             {ok, Tree4#bp_tree{order = Order}}
                     end;

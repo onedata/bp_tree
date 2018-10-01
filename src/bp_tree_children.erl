@@ -594,8 +594,8 @@ remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children, It, Nex
 
                             case NextItems of
                                 [{NextKey, NextPred} | NextTail] ->
-                                    case remove({Selector, NextKey}, NextPred,
-                                        Children2, It2, NextTail) of
+                                    case remove({Selector, NextKey}, NextPred, Children2,
+                                        gb_trees:iterator_from(NextKey, Tree2), NextTail) of
                                         {ok, Children3, RemovedKeys} ->
                                             {ok, Children3, [Key | RemovedKeys]};
                                         _ ->
