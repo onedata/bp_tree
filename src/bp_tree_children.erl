@@ -582,39 +582,13 @@ add_until(Tree, _MaxSize, _, AddedKeys, _) ->
 %%--------------------------------------------------------------------
 -spec remove({selector(), key()}, remove_pred(), children(), gb_trees:iter(),
     [{key(), remove_pred()}]) -> {ok, children(), [key()]} | {error, term()}.
-remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children, It, NextItems) ->
+remove({Selector, Key}, Pred, #bp_tree_children{} = Children, It, NextItems) ->
     case gb_trees:next(It) of
         {Key, Value, It2} ->
             case Pred(Value) of
                 true ->
-                    Tree2 = gb_trees:delete(Key, Tree),
-                    case Selector of
-                        left ->
-                            Children2 = Children#bp_tree_children{data = Tree2},
-
-                            case NextItems of
-                                [{NextKey, NextPred} | NextTail] ->
-                                    case remove({Selector, NextKey}, NextPred, Children2,
-                                        gb_trees:iterator_from(NextKey, Tree2), NextTail) of
-                                        {ok, Children3, RemovedKeys} ->
-                                            {ok, Children3, [Key | RemovedKeys]};
-                                        _ ->
-                                            {ok, Children2, [Key]}
-                                    end;
-                                _ ->
-                                    {ok, Children2, [Key]}
-                            end;
-                        right ->
-                            case gb_trees:next(It2) of
-                                {Key2, _, _} ->
-                                    Tree3 = gb_trees:enter(Key2, Value, Tree2),
-                                    {ok, Children#bp_tree_children{data = Tree3},
-                                        [Key]};
-                                _ ->
-                                    {ok, Children#bp_tree_children{data = Tree2,
-                                        last_value = Value}, [Key]}
-                            end
-                    end;
+                    remove_found_key({Selector, Key}, Value, Children, It2,
+                        NextItems);
                 false ->
                     {error, predicate_not_satisfied}
             end;
@@ -622,4 +596,43 @@ remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children, It, Nex
             remove({Selector, Key}, Pred, Children, It2, NextItems);
         _ ->
             {error, not_found}
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Removes found key and associated value. Initializes remove of next items.
+%% @end
+%%--------------------------------------------------------------------
+-spec remove_found_key({selector(), key()}, value(), children(), gb_trees:iter(),
+    [{key(), remove_pred()}]) -> {ok, children(), [key()]}.
+remove_found_key({Selector, Key}, Value,
+    #bp_tree_children{data = Tree} = Children, It, NextItems) ->
+    Tree2 = gb_trees:delete(Key, Tree),
+    case Selector of
+        left ->
+            Children2 = Children#bp_tree_children{data = Tree2},
+
+            case NextItems of
+                [{NextKey, NextPred} | NextTail] ->
+                    case remove({Selector, NextKey}, NextPred, Children2,
+                        gb_trees:iterator_from(NextKey, Tree2), NextTail) of
+                        {ok, Children3, RemovedKeys} ->
+                            {ok, Children3, [Key | RemovedKeys]};
+                        _ ->
+                            {ok, Children2, [Key]}
+                    end;
+                _ ->
+                    {ok, Children2, [Key]}
+            end;
+        right ->
+            case gb_trees:next(It) of
+                {Key2, _, _} ->
+                    Tree3 = gb_trees:enter(Key2, Value, Tree2),
+                    {ok, Children#bp_tree_children{data = Tree3},
+                        [Key]};
+                _ ->
+                    {ok, Children#bp_tree_children{data = Tree2,
+                        last_value = Value}, [Key]}
+            end
     end.

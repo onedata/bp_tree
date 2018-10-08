@@ -127,7 +127,6 @@ terminate(Tree = #bp_tree{order = Order}) ->
                     IRI = get(initial_rebalance_info),
                     InitRootId = get(initial_root_id),
 
-
                     Tree5 = case {RI =:= IRI, RootId =:= InitRootId} of
                         {true, true} ->
                             Tree2;
