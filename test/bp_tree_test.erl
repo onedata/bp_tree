@@ -32,6 +32,9 @@ new_should_use_custom_options_test_() ->
             meck:new(StoreModule, [non_strict]),
             meck:expect(StoreModule, init, fun(Args) when Args =:= StoreArgs ->
                 {ok, state}
+            end),
+            meck:expect(StoreModule, get_root_id, fun(State) ->
+                {{error, not_found}, State}
             end)
         end,
         fun(_) ->
@@ -172,7 +175,7 @@ prev_node_test() ->
 insert([], Tree) ->
     Tree;
 insert([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:insert(X, X, Tree),
+    {ok, [X], Tree2} = bp_tree:insert([{X, X}], Tree),
     insert(Seq, Tree2).
 
 find([], Tree) ->
@@ -184,13 +187,13 @@ find([X | Seq], Tree) ->
 remove([], Tree) ->
     Tree;
 remove([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:remove(X, Tree),
+    {ok, [X], Tree2} = bp_tree:remove([{X, fun(_) -> true end}], Tree),
     remove(Seq, Tree2).
 
 remove_and_fold([], Tree) ->
     fold([], Tree);
 remove_and_fold([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:remove(X, Tree),
+    {ok, [X], Tree2} = bp_tree:remove([{X, fun(_) -> true end}], Tree),
     Tree3 = fold(Seq, Tree2),
     remove_and_fold(Seq, Tree3).
 

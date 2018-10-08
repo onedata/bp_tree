@@ -20,13 +20,16 @@
 -export([child/2, child_with_sibling/2, child_with_right_sibling/2]).
 -export([leftmost_child/1]).
 -export([find/2, find_pos/2, lower_bound/2, left_sibling/2]).
--export([insert/3, remove/3, merge/3, split/1]).
--export([rotate_right/3, rotate_left/3]).
+-export([insert/3, remove/2, merge/3, split/1]).
+-export([rotate_right/4, rotate_left/4]).
 -export([fold/4]).
+-export([get_rebalance_info/1, set_rebalance_info/2]).
+-export([get_order/1, set_order/2]).
 
 -type id() :: any().
-
--export_type([id/0]).
+-type rebalance_info() :: undefined |
+    #{links_tree:id() => {bp_tree_node:id(), bp_tree:key()}}.
+-export_type([id/0, rebalance_info/0]).
 
 %%====================================================================
 %% API functions
@@ -227,16 +230,19 @@ lower_bound(Key, #bp_tree_node{leaf = true, children = Children}) ->
 %% Inserts key-value pair into a node.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(bp_tree:key(), bp_tree:value(), bp_tree:tree_node()) ->
-    {ok, bp_tree:tree_node()} | {error, term()}.
-insert(Key, Value, Node = #bp_tree_node{leaf = true, children = Children}) ->
-    case bp_tree_children:insert({left, Key}, Value, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
+-spec insert([{bp_tree:key(), bp_tree:value()}], bp_tree:tree_node(),
+    non_neg_integer() | undefined) ->
+    {ok, bp_tree:tree_node(), [bp_tree:key()]} | {error, term()}.
+insert(Items, Node = #bp_tree_node{leaf = true, children = Children}, MaxSize) ->
+    case bp_tree_children:insert({left, Items}, Children, MaxSize) of
+        {ok, Children2, AddedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, AddedKeys};
         {error, Reason} -> {error, Reason}
     end;
-insert(Key, Value, Node = #bp_tree_node{leaf = false, children = Children}) ->
-    case bp_tree_children:insert({both, Key}, Value, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
+insert(Items, Node = #bp_tree_node{leaf = false, children = Children}, MaxSize) ->
+    case bp_tree_children:insert({both, Items}, Children, MaxSize) of
+        {ok, Children2, AddedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, AddedKeys};
         {error, Reason} -> {error, Reason}
     end.
 
@@ -245,16 +251,19 @@ insert(Key, Value, Node = #bp_tree_node{leaf = false, children = Children}) ->
 %% Removes key and associated value from a node.
 %% @end
 %%--------------------------------------------------------------------
--spec remove(bp_tree:key(), bp_tree:remove_pred(), bp_tree:tree_node()) ->
-    {ok, bp_tree:tree_node()} | {error, term()}.
-remove(Key, Pred, Node = #bp_tree_node{leaf = true, children = Children}) ->
-    case bp_tree_children:remove({left, Key}, Pred, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
-        {error, Reason} -> {error, Reason}
+-spec remove([{bp_tree:key(), bp_tree:remove_pred()}], bp_tree:tree_node()) ->
+    {ok, bp_tree:tree_node(), [bp_tree:key()]} | {error, term()}.
+remove(Items, Node = #bp_tree_node{leaf = true, children = Children}) ->
+    case bp_tree_children:remove({left, Items}, Children) of
+        {ok, Children2, RemovedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, RemovedKeys};
+        {error, Reason} ->
+            {error, Reason}
     end;
-remove(Key, _Pred, Node = #bp_tree_node{leaf = false, children = Children}) ->
-    case bp_tree_children:remove({right, Key}, Children) of
-        {ok, Children2} -> {ok, Node#bp_tree_node{children = Children2}};
+remove(Items, Node = #bp_tree_node{leaf = false, children = Children}) ->
+    case bp_tree_children:remove({right, Items}, Children) of
+        {ok, Children2, RemovedKeys} ->
+            {ok, Node#bp_tree_node{children = Children2}, RemovedKeys};
         {error, Reason} -> {error, Reason}
     end.
 
@@ -295,6 +304,97 @@ split(LNode = #bp_tree_node{leaf = false, children = Children}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Moves values from a left sibling to a node until size of node is less than
+%% order.
+%% @end
+%%--------------------------------------------------------------------
+-spec rotate_right(bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node(),
+    non_neg_integer()) ->
+    {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
+rotate_right(LNode, ParentKey, RNode, Order) ->
+    {LNode2, ParentKey2, RNode2} = Ans =
+        rotate_right(LNode, ParentKey, RNode),
+    case ?MODULE:size(RNode2) < Order of
+        true ->
+            rotate_right(LNode2, ParentKey2, RNode2, Order);
+        _ ->
+            Ans
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Moves values from a right sibling to a node until size of node is less than
+%% order.
+%% @end
+%%--------------------------------------------------------------------
+-spec rotate_left(bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node(),
+    non_neg_integer()) ->
+    {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
+rotate_left(LNode, ParentKey, RNode, Order) ->
+    {LNode2, ParentKey2, RNode2} = Ans =
+        rotate_left(LNode, ParentKey, RNode),
+    case ?MODULE:size(LNode2) < Order of
+        true ->
+            rotate_left(LNode2, ParentKey2, RNode2, Order);
+        _ ->
+            Ans
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Folds B+ tree node.
+%% @end
+%%--------------------------------------------------------------------
+-spec fold(bp_tree:fold_start_spec(), bp_tree:tree_node(),
+    bp_tree:fold_fun(), bp_tree:fold_acc()) -> bp_tree:fold_acc().
+fold(KeyOrPos, #bp_tree_node{children = LChildren}, Fun, Acc) ->
+    bp_tree_children:fold(KeyOrPos, LChildren, Fun, Acc).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets rebalance_info field.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_rebalance_info(bp_tree:tree_node()) -> rebalance_info().
+get_rebalance_info(#bp_tree_node{rebalance_info = Info}) ->
+    Info.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Sets rebalance_info field.
+%% @end
+%%--------------------------------------------------------------------
+-spec set_rebalance_info(bp_tree:tree_node(), rebalance_info()) ->
+    bp_tree:tree_node().
+set_rebalance_info(Node, Info) ->
+    Node#bp_tree_node{rebalance_info = Info}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets order field.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_order(bp_tree:tree_node()) -> undefined | non_neg_integer().
+get_order(#bp_tree_node{order = Order}) ->
+    Order.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Sets order field.
+%% @end
+%%--------------------------------------------------------------------
+-spec set_order(bp_tree:tree_node(), undefined | non_neg_integer()) ->
+    bp_tree:tree_node().
+set_order(Node, Order) ->
+    Node#bp_tree_node{order = Order}.
+
+%%====================================================================
+%% Internal functions
+%%====================================================================
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
 %% Moves maximum value from a left sibling to a node.
 %% @end
 %%--------------------------------------------------------------------
@@ -304,7 +404,7 @@ rotate_right(LNode = #bp_tree_node{leaf = true, children = LChildren},
     _ParentKey, RNode = #bp_tree_node{leaf = true, children = RChildren}) ->
     {ok, Key} = bp_tree_children:get({key, last}, LChildren),
     {ok, Value} = bp_tree_children:get({left, last}, LChildren),
-    {ok, LChildren2} = bp_tree_children:remove({left, Key}, LChildren),
+    {ok, LChildren2, _} = bp_tree_children:remove({left, Key}, LChildren),
     {ok, RChildren2} = bp_tree_children:prepend(Key, Value, RChildren),
     {ok, ParentKey2} = bp_tree_children:get({key, last}, LChildren2),
     {
@@ -316,7 +416,7 @@ rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
     ParentKey, RNode = #bp_tree_node{leaf = false, children = RChildren}) ->
     {ok, Key} = bp_tree_children:get({key, last}, LChildren),
     {ok, Value} = bp_tree_children:get({right, last}, LChildren),
-    {ok, LChildren2} = bp_tree_children:remove({right, Key}, LChildren),
+    {ok, LChildren2, _} = bp_tree_children:remove({right, Key}, LChildren),
     {ok, RChildren2} = bp_tree_children:prepend(ParentKey, Value, RChildren),
     {
         LNode#bp_tree_node{children = LChildren2},
@@ -325,6 +425,7 @@ rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
     }.
 
 %%--------------------------------------------------------------------
+%% @private
 %% @doc
 %% Moves minimum value from a right sibling to a node.
 %% @end
@@ -335,7 +436,7 @@ rotate_left(LNode = #bp_tree_node{leaf = true, children = LChildren},
     _ParentKey, RNode = #bp_tree_node{leaf = true, children = RChildren}) ->
     {ok, Key} = bp_tree_children:get({key, first}, RChildren),
     {ok, Value} = bp_tree_children:get({left, first}, RChildren),
-    {ok, RChildren2} = bp_tree_children:remove({left, Key}, RChildren),
+    {ok, RChildren2, _} = bp_tree_children:remove({left, Key}, RChildren),
     {ok, Next} = bp_tree_children:get({right, last}, LChildren),
     {ok, LChildren2} = bp_tree_children:append({both, Key}, {Value, Next}, LChildren),
     {
@@ -347,20 +448,10 @@ rotate_left(LNode = #bp_tree_node{leaf = false, children = LChildren},
     ParentKey, RNode = #bp_tree_node{leaf = false, children = RChildren}) ->
     {ok, Key} = bp_tree_children:get({key, first}, RChildren),
     {ok, Value} = bp_tree_children:get({left, first}, RChildren),
-    {ok, RChildren2} = bp_tree_children:remove({left, Key}, RChildren),
+    {ok, RChildren2, _} = bp_tree_children:remove({left, Key}, RChildren),
     {ok, LChildren2} = bp_tree_children:append({right, ParentKey}, Value, LChildren),
     {
         LNode#bp_tree_node{children = LChildren2},
         Key,
         RNode#bp_tree_node{children = RChildren2}
     }.
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Folds B+ tree node.
-%% @end
-%%--------------------------------------------------------------------
--spec fold(bp_tree:fold_start_spec(), bp_tree:tree_node(),
-    bp_tree:fold_fun(), bp_tree:fold_acc()) -> bp_tree:fold_acc().
-fold(KeyOrPos, #bp_tree_node{children = LChildren}, Fun, Acc) ->
-    bp_tree_children:fold(KeyOrPos, LChildren, Fun, Acc).

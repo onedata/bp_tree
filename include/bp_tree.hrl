@@ -24,7 +24,9 @@
 
 -record(bp_tree_node, {
     leaf :: boolean(),
-    children :: bp_tree_children:children()
+    children :: bp_tree_children:children(),
+    order :: undefined | non_neg_integer(),
+    rebalance_info :: bp_tree_node:rebalance_info()
 }).
 
 -endif.

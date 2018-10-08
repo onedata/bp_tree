@@ -21,21 +21,23 @@
 
 insert_should_succeed_test() ->
     A = bp_tree_children:new(128),
-    ?assertMatch({ok, _}, bp_tree_children:insert({left, ?K}, ?V, A)),
-    ?assertMatch({ok, _}, bp_tree_children:insert({key, ?K}, ?V, A)),
-    ?assertMatch({ok, _}, bp_tree_children:insert({right, ?K}, ?V, A)),
-    ?assertMatch({ok, _}, bp_tree_children:insert({both, ?K}, {?V, ?V}, A)).
+    Key = ?K,
+    ?assertMatch({ok, _, [Key]}, bp_tree_children:insert({left, [{Key, ?V}]}, A, 100)),
+    ?assertMatch({ok, _, [Key]}, bp_tree_children:insert({key, [{Key, ?V}]}, A, 100)),
+    ?assertMatch({ok, _, [Key]}, bp_tree_children:insert({right, [{Key, ?V}]}, A, 100)),
+    ?assertMatch({ok, _, [Key]}, bp_tree_children:insert({both, [{Key, {?V, ?V}}]}, A, 100)).
 
 insert_should_return_already_exists_error_test() ->
     A = bp_tree_children:new(128),
-    {ok, A2} = bp_tree_children:insert({left, ?K}, ?V, A),
-    ?assertEqual({error, already_exists}, bp_tree_children:insert({left, ?K}, ?V, A2)).
+    Key = ?K,
+    {ok, A2, [Key]} = bp_tree_children:insert({left, [{Key, ?V}]}, A, 100),
+    ?assertEqual({error, already_exists}, bp_tree_children:insert({left, [{Key, ?V}]}, A2, 100)).
 
 insert_should_maintain_order_test_() ->
     {foreachx,
         fun(Keys) ->
             A = lists:foldl(fun(Key, A2) ->
-                {ok, A3} = bp_tree_children:insert({both, Key}, {?V, ?V}, A2),
+                {ok, A3, [Key]} = bp_tree_children:insert({both, [{Key, {?V, ?V}}]}, A2, 100),
                 A3
             end, bp_tree_children:new(128), Keys),
             Keys2 = lists:reverse(lists:sort(Keys)),
@@ -60,20 +62,25 @@ insert_should_maintain_order_test_() ->
 
 remove_should_return_empty_error_test() ->
     A = bp_tree_children:new(128),
-    ?assertEqual({error, not_found}, bp_tree_children:remove({left, ?K}, A)).
+    ?assertEqual({error, not_found}, bp_tree_children:remove({left,
+        [{?K, fun(_) -> true end}]}, A)).
 
 remove_should_return_not_found_error_test() ->
     A = bp_tree_children:from_list([?V, ?K(1), ?V, ?K(3), ?V]),
-    ?assertEqual({error, not_found}, bp_tree_children:remove({left, ?K(2)}, A)).
+    ?assertEqual({error, not_found}, bp_tree_children:remove({left,
+        [{?K(2), fun(_) -> true end}]}, A)).
 
 remove_should_succeed_test() ->
-    A = bp_tree_children:from_list([?V, ?K(1), ?V, ?K(3), ?V, ?K(5), ?V]),
-    A2 = bp_tree_children:from_list([?V, ?K(1), ?V, ?K(5), ?V, ?NIL, ?NIL]),
-    A3 = bp_tree_children:from_list([?V, ?K(5), ?V, ?NIL, ?NIL, ?NIL, ?NIL]),
+    K1 = ?K(1),
+    K3 = ?K(3),
+    K5 = ?K(5),
+    A = bp_tree_children:from_list([?V, K1, ?V, K3, ?V, K5, ?V]),
+    A2 = bp_tree_children:from_list([?V, K1, ?V, K5, ?V, ?NIL, ?NIL]),
+    A3 = bp_tree_children:from_list([?V, K5, ?V, ?NIL, ?NIL, ?NIL, ?NIL]),
     A4 = bp_tree_children:from_list([?V, ?NIL, ?NIL, ?NIL, ?NIL, ?NIL, ?NIL]),
-    ?assertEqual({ok, A2}, bp_tree_children:remove({left, ?K(3)}, A)),
-    ?assertEqual({ok, A3}, bp_tree_children:remove({left, ?K(1)}, A2)),
-    ?assertEqual({ok, A4}, bp_tree_children:remove({left, ?K(5)}, A3)).
+    ?assertEqual({ok, A2, [K3]}, bp_tree_children:remove({left, [{K3, fun(_) -> true end}]}, A)),
+    ?assertEqual({ok, A3, [K1]}, bp_tree_children:remove({left, [{K1, fun(_) -> true end}]}, A2)),
+    ?assertEqual({ok, A4, [K5]}, bp_tree_children:remove({left, [{K5, fun(_) -> true end}]}, A3)).
 
 accessor_should_succeed_test_() ->
     {setup,
@@ -169,21 +176,27 @@ lower_bound_should_succeed_test_() ->
 size_should_succeed_test() ->
     A = bp_tree_children:new(128),
     ?assertEqual(0, bp_tree_children:size(A)),
-    {ok, A2} = bp_tree_children:insert({left, ?K(1)}, ?V, A),
+    K1 = ?K(1),
+    {ok, A2, [K1]} = bp_tree_children:insert({left, [{K1, ?V}]}, A, 100),
     ?assertEqual(1, bp_tree_children:size(A2)),
-    {ok, A3} = bp_tree_children:insert({left, ?K(2)}, ?V, A2),
+    K2 = ?K(2),
+    {ok, A3, [K2]} = bp_tree_children:insert({left, [{K2, ?V}]}, A2, 100),
     ?assertEqual(2, bp_tree_children:size(A3)).
 
 to_list_should_succeed_test() ->
     A = bp_tree_children:new(128),
-    {ok, A2} = bp_tree_children:insert({left, ?K(1)}, ?V, A),
-    {ok, A3} = bp_tree_children:insert({left, ?K(2)}, ?V, A2),
+    K1 = ?K(1),
+    {ok, A2, [K1]} = bp_tree_children:insert({left, [{K1, ?V}]}, A, 100),
+    K2 = ?K(2),
+    {ok, A3, [K2]} = bp_tree_children:insert({left, [{K2, ?V}]}, A2, 100),
     ?assertEqual([?V, ?K(1), ?V, ?K(2)], bp_tree_children:to_list(A3)).
 
 from_list_should_succeed_test() ->
     A = bp_tree_children:new(128),
-    {ok, A2} = bp_tree_children:insert({left, ?K(1)}, ?V, A),
-    {ok, A3} = bp_tree_children:insert({left, ?K(2)}, ?V, A2),
+    K1 = ?K(1),
+    {ok, A2, [K1]} = bp_tree_children:insert({left, [{K1, ?V}]}, A, 100),
+    K2 = ?K(2),
+    {ok, A3, [K2]} = bp_tree_children:insert({left, [{K2, ?V}]}, A2, 100),
     ?assertEqual(bp_tree_children:to_list(A3), bp_tree_children:to_list(
         bp_tree_children:from_list([?V, ?K(1), ?V, ?K(2)]))).
 
@@ -192,12 +205,14 @@ to_map_should_succeed_test() ->
     ?assertEqual(#{
         ?SIZE_KEY => 257
     }, bp_tree_children:to_map(A)),
-    {ok, A2} = bp_tree_children:insert({left, ?K(1)}, ?V(1), A),
+    K1 = ?K(1),
+    {ok, A2, [K1]} = bp_tree_children:insert({left, [{K1, ?V(1)}]}, A, 100),
     ?assertEqual(#{
         ?SIZE_KEY => 257,
         ?K(1) => ?V(1)
     }, bp_tree_children:to_map(A2)),
-    {ok, A3} = bp_tree_children:insert({left, ?K(2)}, ?V(2), A2),
+    K2 = ?K(2),
+    {ok, A3, [K2]} = bp_tree_children:insert({left, [{K2, ?V(2)}]}, A2, 100),
     ?assertEqual(#{
         ?SIZE_KEY => 257,
         ?K(1) => ?V(1),
@@ -216,12 +231,14 @@ from_map_should_succeed_test() ->
     ?assertEqual(A, bp_tree_children:from_map(#{
         ?SIZE_KEY => 257
     })),
-    {ok, A2} = bp_tree_children:insert({left, ?K(1)}, ?V(1), A),
+    K1 = ?K(1),
+    {ok, A2, [K1]} = bp_tree_children:insert({left, [{K1, ?V(1)}]}, A, 100),
     ?assertEqual(A2, bp_tree_children:from_map(#{
         ?SIZE_KEY => 257,
         ?K(1) => ?V(1)
     })),
-    {ok, A3} = bp_tree_children:insert({left, ?K(2)}, ?V(2), A2),
+    K2 = ?K(2),
+    {ok, A3, [K2]} = bp_tree_children:insert({left, [{K2, ?V(2)}]}, A2, 100),
     ?assertEqual(bp_tree_children:to_list(A3), bp_tree_children:to_list(
         bp_tree_children:from_map(#{
             ?SIZE_KEY => 257,

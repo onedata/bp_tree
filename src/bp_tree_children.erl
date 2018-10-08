@@ -15,7 +15,7 @@
 
 %% API exports
 -export([new/1, size/1]).
--export([get/2, update_last_value/2, remove/2, remove/3]).
+-export([get/2, update_last_value/2, remove/2]).
 -export([find/2, find_value/2, lower_bound/2]).
 -export([insert/3, append/3, prepend/3, split/1, merge/2]).
 -export([to_map/1, from_map/1]).
@@ -219,39 +219,16 @@ lower_bound(Key, #bp_tree_children{data = Tree}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Inserts a key-value pair.
+%% Inserts values to tree.
 %% @end
 %%--------------------------------------------------------------------
--spec insert({selector(), key()}, value() | {value(), value()}, children()) ->
-    {ok, children()} | {error, out_of_space | already_exists}.
-insert({Selector, Key}, Value0, #bp_tree_children{data = Tree} = Children) ->
+-spec insert({selector(), [{key(), value() | {value(), value()}}]}, children(),
+    non_neg_integer() | undefined) ->
+    {ok, children(), [key()]} | {error, out_of_space | already_exists}.
+insert({Selector, [{Key, Value} | Tail]},
+    #bp_tree_children{data = Tree} = Children, MaxSize) ->
     It = gb_trees:iterator_from(Key, Tree),
-    case gb_trees:next(It) of
-        {Key, _OldValue, _} ->
-            {error, already_exists};
-        {NextKey, _, _} ->
-            case Selector of
-                both ->
-                    {Value, NextValue} = Value0,
-                    Tree2 = gb_trees:insert(Key, Value, Tree),
-                    Tree3 = gb_trees:enter(NextKey, NextValue, Tree2),
-                    {ok, Children#bp_tree_children{data = Tree3}};
-                _ ->
-                    Tree2 = gb_trees:insert(Key, Value0, Tree),
-                    {ok, Children#bp_tree_children{data = Tree2}}
-            end;
-        none ->
-            case Selector of
-                both ->
-                    {Value, NextValue} = Value0,
-                    Tree2 = gb_trees:insert(Key, Value, Tree),
-                    {ok, Children#bp_tree_children{data = Tree2,
-                        last_value = NextValue}};
-                _ ->
-                    Tree2 = gb_trees:insert(Key, Value0, Tree),
-                    {ok, Children#bp_tree_children{data = Tree2}}
-            end
-    end.
+    insert({Selector, Key}, Value, Children, MaxSize, It, Tail).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -289,47 +266,17 @@ prepend(Key, Value, #bp_tree_children{data = Tree} = Children) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Removes a key and associated value.
+%% Removes keys and associated values.
 %% @end
 %%--------------------------------------------------------------------
--spec remove({selector(), key()}, children()) ->
-    {ok, children()} | {error, term()}.
-remove({Selector, Key}, #bp_tree_children{} = Children) ->
-    remove({Selector, Key}, fun(_) -> true end, Children).
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Removes a key and associated value if predicate is satisfied.
-%% @end
-%%--------------------------------------------------------------------
--spec remove({selector(), key()}, remove_pred(), children()) ->
-    {ok, children()} | {error, term()}.
-remove({Selector, Key}, Pred, #bp_tree_children{data = Tree} = Children) ->
+-spec remove({selector(), [{key(), remove_pred()}]}, children()) ->
+    {ok, children(), [key()]} | {error, term()}.
+remove({Selector, [{Key, Pred} | Tail]},
+    #bp_tree_children{data = Tree} = Children) ->
     It = gb_trees:iterator_from(Key, Tree),
-    case gb_trees:next(It) of
-        {Key, Value, It2} ->
-            case Pred(Value) of
-                true ->
-                    Tree2 = gb_trees:delete(Key, Tree),
-                    case Selector of
-                        left ->
-                            {ok, Children#bp_tree_children{data = Tree2}};
-                        right ->
-                            case gb_trees:next(It2) of
-                                {Key2, _, _} ->
-                                    Tree3 = gb_trees:enter(Key2, Value, Tree2),
-                                    {ok, Children#bp_tree_children{data = Tree3}};
-                                _ ->
-                                    {ok, Children#bp_tree_children{data = Tree2,
-                                        last_value = Value}}
-                            end
-                    end;
-                false ->
-                    {error, predicate_not_satisfied}
-            end;
-        _ ->
-            {error, not_found}
-    end.
+    remove({Selector, Key}, Pred, Children, It, Tail);
+remove({Selector, Key}, #bp_tree_children{} = Children) ->
+    remove({Selector, [{Key, fun(_) -> true end}]}, Children).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -357,10 +304,18 @@ split(#bp_tree_children{data = Tree, max_size = MaxSize} = Children) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec merge(children(), children()) -> children().
-merge(#bp_tree_children{data = LTree}, #bp_tree_children{data = RTree} = Children) ->
-    LList = gb_trees:to_list(LTree),
-    RList = gb_trees:to_list(RTree),
-    Children#bp_tree_children{data = gb_trees:from_orddict(LList ++ RList)}.
+merge(#bp_tree_children{data = LTree},
+    #bp_tree_children{data = RTree} = Children) ->
+    case {gb_trees:is_empty(LTree), gb_trees:is_empty(LTree)} of
+        {true, _} ->
+            Children;
+        {_, true} ->
+            Children#bp_tree_children{data = LTree};
+        _ ->
+            LList = gb_trees:to_list(LTree),
+            RList = gb_trees:to_list(RTree),
+            Children#bp_tree_children{data = gb_trees:from_orddict(LList ++ RList)}
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -541,4 +496,143 @@ get_pos(It, Pos, CurrentPos, _TmpAns) ->
             {error, out_of_range};
         {_Key, _Value, It2} = Ans ->
             get_pos(It2, Pos, CurrentPos + 1, Ans)
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Inserts values to tree.
+%% @end
+%%--------------------------------------------------------------------
+-spec insert({selector(), key()}, value() | {value(), value()}, children(),
+    non_neg_integer() | undefined, gb_trees:iter(), [{key(), value()}]) ->
+    {ok, children(), [key()]} | {error, out_of_space | already_exists}.
+insert({Selector, Key}, Value0, #bp_tree_children{data = Tree, last_value = LV}
+    = Children, MaxSize, It, NextItems) ->
+    case gb_trees:next(It) of
+        {Key, _OldValue, _} ->
+            {error, already_exists};
+        {ExistingKey, _, _} ->
+            case Selector of
+                both ->
+                    {Value, NextValue} = Value0,
+                    Tree2 = gb_trees:insert(Key, Value, Tree),
+                    Tree3 = gb_trees:enter(ExistingKey, NextValue, Tree2),
+                    {ok, Children#bp_tree_children{data = Tree3}, [Key]};
+                _ ->
+                    Tree2 = gb_trees:insert(Key, Value0, Tree),
+                    {Tree3, AddedKeys} = case LV of
+                        ?NIL ->
+                            add_until(Tree2, MaxSize, NextItems, [Key], ?NIL);
+                        _ ->
+                            {LargestKey, _} = gb_trees:largest(Tree),
+                            add_until(Tree2, MaxSize, NextItems, [Key], LargestKey)
+                    end,
+                    {ok, Children#bp_tree_children{data = Tree3}, AddedKeys}
+            end;
+        none ->
+            case Selector of
+                both ->
+                    {Value, NextValue} = Value0,
+                    Tree2 = gb_trees:insert(Key, Value, Tree),
+                    {ok, Children#bp_tree_children{data = Tree2,
+                        last_value = NextValue}, [Key]};
+                _ ->
+                    Tree2 = gb_trees:insert(Key, Value0, Tree),
+                    {Tree3, AddedKeys} = case LV of
+                        ?NIL -> add_until(Tree2, MaxSize, NextItems, [Key], ?NIL);
+                        _ -> {Tree2, [Key]}
+                    end,
+                    {ok, Children#bp_tree_children{data = Tree3}, AddedKeys}
+            end
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Adds {Key, Value} pairs to tree until tree is full or Key is greater then
+%% last key in the tree.
+%% @end
+%%--------------------------------------------------------------------
+-spec add_until(gb_trees:tree(), non_neg_integer() | undefined,
+    [{key(), value()}], [key()], key()) -> {gb_trees:tree(), [key()]}.
+add_until(Tree, MaxSize, [{NextKey, NextValue} | NextTail], AddedKeys,
+    LastKey) when NextKey < LastKey ; LastKey =:= ?NIL ->
+    case (MaxSize =:= undefined) orelse (gb_trees:size(Tree) < MaxSize) of
+        true ->
+            try
+                Tree2 = gb_trees:insert(NextKey, NextValue, Tree),
+                add_until(Tree2, MaxSize, NextTail, [NextKey | AddedKeys], LastKey)
+            catch
+                _:_ ->
+                    % Already exists
+                    {Tree, AddedKeys}
+            end;
+        _ ->
+            {Tree, AddedKeys}
+    end;
+add_until(Tree, _MaxSize, _, AddedKeys, _) ->
+    {Tree, AddedKeys}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Removes a keys and associated values.
+%% @end
+%%--------------------------------------------------------------------
+-spec remove({selector(), key()}, remove_pred(), children(), gb_trees:iter(),
+    [{key(), remove_pred()}]) -> {ok, children(), [key()]} | {error, term()}.
+remove({Selector, Key}, Pred, #bp_tree_children{} = Children, It, NextItems) ->
+    case gb_trees:next(It) of
+        {Key, Value, It2} ->
+            case Pred(Value) of
+                true ->
+                    remove_found_key({Selector, Key}, Value, Children, It2,
+                        NextItems);
+                false ->
+                    {error, predicate_not_satisfied}
+            end;
+        {Key2, _, It2} when Key2 < Key ->
+            remove({Selector, Key}, Pred, Children, It2, NextItems);
+        _ ->
+            {error, not_found}
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Removes found key and associated value. Initializes remove of next items.
+%% @end
+%%--------------------------------------------------------------------
+-spec remove_found_key({selector(), key()}, value(), children(), gb_trees:iter(),
+    [{key(), remove_pred()}]) -> {ok, children(), [key()]}.
+remove_found_key({Selector, Key}, Value,
+    #bp_tree_children{data = Tree} = Children, It, NextItems) ->
+    Tree2 = gb_trees:delete(Key, Tree),
+    case Selector of
+        left ->
+            Children2 = Children#bp_tree_children{data = Tree2},
+
+            case NextItems of
+                [{NextKey, NextPred} | NextTail] ->
+                    case remove({Selector, NextKey}, NextPred, Children2,
+                        gb_trees:iterator_from(NextKey, Tree2), NextTail) of
+                        {ok, Children3, RemovedKeys} ->
+                            {ok, Children3, [Key | RemovedKeys]};
+                        _ ->
+                            {ok, Children2, [Key]}
+                    end;
+                _ ->
+                    {ok, Children2, [Key]}
+            end;
+        right ->
+            case gb_trees:next(It) of
+                {Key2, _, _} ->
+                    Tree3 = gb_trees:enter(Key2, Value, Tree2),
+                    {ok, Children#bp_tree_children{data = Tree3},
+                        [Key]};
+                _ ->
+                    {ok, Children#bp_tree_children{data = Tree2,
+                        last_value = Value}, [Key]}
+            end
     end.
