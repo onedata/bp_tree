@@ -27,8 +27,7 @@
 -export([get_order/1, set_order/2]).
 
 -type id() :: any().
--type rebalance_info() :: undefined |
-    #{links_tree:id() => {bp_tree_node:id(), bp_tree:key()}}.
+-type rebalance_info() :: undefined | [{bp_tree_node:id(), bp_tree:key()}].
 -export_type([id/0, rebalance_info/0]).
 
 %%====================================================================
