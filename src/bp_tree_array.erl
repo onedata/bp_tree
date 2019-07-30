@@ -402,7 +402,7 @@ shift_right(Begin, Array = #bp_tree_array{size = Size, data = Data}) ->
 %% Converts list format of an array into a map.
 %% @end
 %%--------------------------------------------------------------------
--spec to_map(list(), maps:map()) -> maps:map().
+-spec to_map(list(), map()) -> map().
 to_map([], Map) ->
     Map;
 to_map([?NIL], Map) ->

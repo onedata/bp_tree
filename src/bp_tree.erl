@@ -38,7 +38,13 @@
 -type fold_next_node_id() :: bp_tree_node:id() | undefined.
 -type fold_start_spec() :: {pos, pos_integer()} | {key, key()} | all.
 -type error() :: {error, term()}.
--type error_stacktrace() :: {error, {term(), [erlang:stack_item()]}}.
+-type stack_item() :: {
+    Module :: module(),
+    Function :: atom(),
+    Arity :: arity() | (Args :: [term()]),
+    Location :: [{file, Filename :: string()} |
+    {line, Line :: pos_integer()}]}.
+-type error_stacktrace() :: {error, {term(), [stack_item()]}}.
 
 -export_type([key/0, value/0, tree/0, tree_node/0, order/0]).
 -export_type([remove_pred/0]).
@@ -731,7 +737,7 @@ fold_node(KeyOrPos, Node, Fun, Acc) ->
 %% Handles exceptions.
 %% @end
 %%--------------------------------------------------------------------
--spec handle_exception(term(), [erlang:stack_item()], tree()) ->
+-spec handle_exception(term(), [stack_item()], tree()) ->
     {error() | error_stacktrace(), tree()}.
 handle_exception({badmatch, {{error, Reason}, Tree = #bp_tree{}}}, _, _) ->
     {{error, Reason}, Tree};
