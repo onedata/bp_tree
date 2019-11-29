@@ -67,7 +67,7 @@ init() ->
 %% Creates B+ tree handle.
 %% @end
 %%--------------------------------------------------------------------
--spec init([init_opt()]) -> {ok, tree()} | error().
+-spec init([init_opt()]) -> {ok | broken_root, tree()} | error().
 init(Opts) ->
     Args = proplists:get_value(store_args, Opts, []),
     Tree = #bp_tree{
@@ -80,19 +80,30 @@ init(Opts) ->
         {ok, Tree2} ->
             case bp_tree_store:get_root_id(Tree2) of
                 {{ok, RootId}, Tree3} ->
-                    {{ok, Node}, Tree4} =  bp_tree_store:get_node(RootId, Tree3),
+                    case bp_tree_store:get_node(RootId, Tree3) of
+                        {{ok, Node}, Tree4} ->
+                            RI = bp_tree_node:get_rebalance_info(Node),
+                            put(rebalance_info, RI),
+                            put(initial_rebalance_info, RI),
+                            put(initial_root_id, RootId),
 
-                    RI = bp_tree_node:get_rebalance_info(Node),
-                    put(rebalance_info, RI),
-                    put(initial_rebalance_info, RI),
-                    put(initial_root_id, RootId),
-
-                    Order = bp_tree_node:get_order(Node),
-                    case Order of
-                        undefined ->
-                            {ok, Tree4#bp_tree{order = 128}};
-                        _ ->
-                            {ok, Tree4#bp_tree{order = Order}}
+                            Order = bp_tree_node:get_order(Node),
+                            case Order of
+                                undefined ->
+                                    {ok, Tree4#bp_tree{order = 128}};
+                                _ ->
+                                    {ok, Tree4#bp_tree{order = Order}}
+                            end;
+                        {_, Tree4} ->
+                            % document has been deleted from database not using bp_tree
+                            % tree is inconsistent
+                            case get(read_only) of
+                                true ->
+                                    {broken_root, Tree4};
+                                _ ->
+                                    {ok, Tree5} = bp_tree_store:unset_root_id(Tree4),
+                                    {broken_root, Tree5}
+                            end
                     end;
                 {_, Tree3} ->
                     {ok, Tree3}
@@ -247,41 +258,55 @@ fold(Fun, Acc, Tree) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Calls Fun(Key, Value, Acc) on successive elements of a B+ tree leaf.
-%% Fun/2 must return a new accumulator, which is passed to the next call.
+%% @equiv fold_unsafe(Init, Fun, Acc, Tree) with exception handling
 %% @end
 %%--------------------------------------------------------------------
 -spec fold(fold_init(), fold_fun(), fold_acc(), tree()) ->
     {{ok, {fold_acc(), fold_next_node_id()}} | error(), tree()}.
-fold({node_id, NodeId}, Fun, Acc, Tree) ->
+fold(Init, Fun, Acc, Tree) ->
+    try
+        fold_unsafe(Init, Fun, Acc, Tree)
+    catch
+        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Calls Fun(Key, Value, Acc) on successive elements of a B+ tree leaf.
+%% Fun/2 must return a new accumulator, which is passed to the next call.
+%% @end
+%%--------------------------------------------------------------------
+-spec fold_unsafe(fold_init(), fold_fun(), fold_acc(), tree()) ->
+    {{ok, {fold_acc(), fold_next_node_id()}} | error(), tree()}.
+fold_unsafe({node_id, NodeId}, Fun, Acc, Tree) ->
     case bp_tree_store:get_node(NodeId, Tree) of
         {{ok, Node}, Tree2} ->
             {{ok, fold_node(all, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
-fold({offset, Offset}, Fun, Acc, Tree) ->
+fold_unsafe({offset, Offset}, Fun, Acc, Tree) ->
     case bp_tree_leaf:find_offset(Offset, Tree) of
         {{ok, Pos, Node}, Tree2} ->
             {{ok, fold_node({pos, Pos}, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
-fold({start_key, Key}, Fun, Acc, Tree) ->
+fold_unsafe({start_key, Key}, Fun, Acc, Tree) ->
     case bp_tree_leaf:lower_bound_node(Key, Tree) of
         {{ok, Node}, Tree2} ->
             {{ok, fold_node({key, Key}, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
-fold({node_of_key, Key}, Fun, Acc, Tree) ->
+fold_unsafe({node_of_key, Key}, Fun, Acc, Tree) ->
     case bp_tree_leaf:lower_bound_node(Key, Tree) of
         {{ok, Node}, Tree2} ->
             {{ok, fold_node(all, Node, Fun, Acc)}, Tree2};
         {{error, Reason}, Tree2} ->
             {{error, Reason}, Tree2}
     end;
-fold({node_prev_to_key, Key}, Fun, Acc, Tree) ->
+fold_unsafe({node_prev_to_key, Key}, Fun, Acc, Tree) ->
     case get_prev_leaf({key, Key}, Tree) of
         {_, undefined, Tree2} ->
             {{error, first_node}, Tree2};
@@ -289,7 +314,7 @@ fold({node_prev_to_key, Key}, Fun, Acc, Tree) ->
             {{ok, fold_node(all, Node, Fun, Acc)}, Tree2}
     end;
 % TODO - low performance
-fold({prev_key, Key}, Fun, Acc, Tree) ->
+fold_unsafe({prev_key, Key}, Fun, Acc, Tree) ->
     case bp_tree_leaf:find_next(Key, Tree) of
         {{ok, Pos, Node}, Tree2} ->
             {{ok, fold_node({pos, Pos}, Node, Fun, Acc)}, Tree2};
