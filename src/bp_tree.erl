@@ -517,7 +517,7 @@ rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
     {{ok, SNode}, Tree2} = bp_tree_store:get_node(SNodeId, Tree),
     Size = bp_tree_node:size(Node),
     case Size + bp_tree_node:size(SNode) >= 2*Order of
-        % TODO - jak jest pusty node to przepisujemy id a nie merge
+        % TODO - overwrite id instead of merge when node is empty
         false when Key =< ParentKey ->
             {NewPath, NewNodeId, Node2, Tree3} =
                 merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree2, Path),
