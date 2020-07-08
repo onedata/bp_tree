@@ -69,47 +69,53 @@ init() ->
 %%--------------------------------------------------------------------
 -spec init([init_opt()]) -> {ok | broken_root, tree()} | error().
 init(Opts) ->
-    Args = proplists:get_value(store_args, Opts, []),
-    Tree = #bp_tree{
-        order = proplists:get_value(order, Opts, 50),
-        store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
-    },
-    put(read_only, proplists:get_value(read_only, Opts, false)),
+    try
+        Args = proplists:get_value(store_args, Opts, []),
+        Tree = #bp_tree{
+            order = proplists:get_value(order, Opts, 50),
+            store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
+        },
+        ReadOnly = proplists:get_value(read_only, Opts, false),
+        put(read_only, ReadOnly),
 
-    case bp_tree_store:init(Args, Tree) of
-        {ok, Tree2} ->
-            case bp_tree_store:get_root_id(Tree2) of
-                {{ok, RootId}, Tree3} ->
-                    case bp_tree_store:get_node(RootId, Tree3) of
-                        {{ok, Node}, Tree4} ->
-                            RI = bp_tree_node:get_rebalance_info(Node),
-                            put(rebalance_info, RI),
-                            put(initial_rebalance_info, RI),
-                            put(initial_root_id, RootId),
+        case bp_tree_store:init(Args, Tree) of
+            {ok, Tree2} ->
+                case bp_tree_store:get_root_id(Tree2) of
+                    {{ok, RootId}, Tree3} ->
+                        case {bp_tree_store:get_node(RootId, Tree3), ReadOnly} of
+                            {{{ok, Node}, Tree4}, _} ->
+                                RI = bp_tree_node:get_rebalance_info(Node),
+                                put(rebalance_info, RI),
+                                put(initial_rebalance_info, RI),
+                                put(initial_root_id, RootId),
 
-                            Order = bp_tree_node:get_order(Node),
-                            case Order of
-                                undefined ->
-                                    {ok, Tree4#bp_tree{order = 128}};
-                                _ ->
-                                    {ok, Tree4#bp_tree{order = Order}}
-                            end;
-                        {_, Tree4} ->
-                            % document has been deleted from database not using bp_tree
-                            % tree is inconsistent
-                            case get(read_only) of
-                                true ->
-                                    {broken_root, Tree4};
-                                _ ->
-                                    {ok, Tree5} = bp_tree_store:unset_root_id(Tree4),
-                                    {broken_root, Tree5}
-                            end
-                    end;
-                {_, Tree3} ->
-                    {ok, Tree3}
-            end;
-        Error ->
-            Error
+                                Order = bp_tree_node:get_order(Node),
+                                case Order of
+                                    undefined ->
+                                        {ok, Tree4#bp_tree{order = 128}};
+                                    _ ->
+                                        {ok, Tree4#bp_tree{order = Order}}
+                                end;
+                            {{{error, not_found}, Tree4}, false} ->
+                                % document has been deleted from database not using bp_tree
+                                % tree is inconsistent - fix it
+                                {ok, Tree5} = bp_tree_store:unset_root_id(Tree4),
+                                {broken_root, Tree5};
+                            {{{error, not_found}, Tree4}, true} ->
+                                {broken_root, Tree4};
+                            {{RootError, _Tree4}, _} ->
+                                RootError
+                        end;
+                    {_, Tree3} ->
+                        {ok, Tree3}
+                end;
+            Error ->
+                Error
+        end
+    catch
+        _:Reason ->
+            {ErrorAns, _} = handle_exception(Reason, erlang:get_stacktrace(), undefined),
+            ErrorAns
     end.
 
 %%--------------------------------------------------------------------
@@ -511,7 +517,7 @@ rebalance_node(Key, NodeId, Node, ParentKey, SNodeId, Path, Tree = #bp_tree{
     {{ok, SNode}, Tree2} = bp_tree_store:get_node(SNodeId, Tree),
     Size = bp_tree_node:size(Node),
     case Size + bp_tree_node:size(SNode) >= 2*Order of
-        % TODO - jak jest pusty node to przepisujemy id a nie merge
+        % TODO - overwrite id instead of merge when node is empty
         false when Key =< ParentKey ->
             {NewPath, NewNodeId, Node2, Tree3} =
                 merge_nodes(Node, SNode, NodeId, SNodeId, ParentKey, Tree2, Path),
@@ -762,13 +768,16 @@ fold_node(KeyOrPos, Node, Fun, Acc) ->
 %% Handles exceptions.
 %% @end
 %%--------------------------------------------------------------------
--spec handle_exception(term(), [stack_item()], tree()) ->
-    {error() | error_stacktrace(), tree()}.
-handle_exception({badmatch, {{error, Reason}, Tree = #bp_tree{}}}, _, _) ->
+-spec handle_exception(term(), [stack_item()], tree() | undefined) ->
+    {error() | error_stacktrace(), tree() | undefined}.
+handle_exception({Type, {{error, Reason}, Tree = #bp_tree{}}}, _, _)
+    when Type =:= badmatch orelse Type =:= case_clause ->
     {{error, Reason}, Tree};
-handle_exception({badmatch, {error, Reason}}, _, Tree) ->
+handle_exception({Type, {error, Reason}}, _, Tree)
+    when Type =:= badmatch orelse Type =:= case_clause ->
     {{error, Reason}, Tree};
-handle_exception({badmatch, Reason}, _, Tree) ->
+handle_exception({Type, Reason}, _, Tree)
+    when Type =:= badmatch orelse Type =:= case_clause ->
     {{error, Reason}, Tree};
 handle_exception(Reason, Stacktrace, Tree) ->
     {{error, {Reason, Stacktrace}}, Tree}.
