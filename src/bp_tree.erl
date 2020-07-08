@@ -103,7 +103,7 @@ init(Opts) ->
                                 {broken_root, Tree5};
                             {{{error, not_found}, Tree4}, true} ->
                                 {broken_root, Tree4};
-                            {RootError, _} ->
+                            {{RootError, _Tree4}, _} ->
                                 RootError
                         end;
                     {_, Tree3} ->
