@@ -125,24 +125,41 @@ find_next(Key, NodeId, Tree, Path) ->
 find_next_in_leaf(Key, Node, Tree, Path) ->
     Pos = bp_tree_node:lower_bound(Key, Node),
     % TODO - change
-    case bp_tree_node:value(Pos + 1, Node) of
+    case bp_tree_node:key(Pos, Node) of
+        {ok, Key} ->
+            case bp_tree_node:value(Pos + 1, Node) of
+                {ok, _} ->
+                    {{ok, Pos + 1, Node}, Tree};
+                {error, out_of_range} ->
+                    find_next_using_path(Tree, Path)
+            end;
         {ok, _} ->
-            {{ok, Pos + 1, Node}, Tree};
+            {{ok, Pos, Node}, Tree};
         {error, out_of_range} ->
-            Path2 = lists:dropwhile(fun(SNodeId) -> SNodeId == ?NIL end, Path),
-            case Path2 of
-                [] ->
-                    {{error, not_found}, Tree};
-                [SNodeId | _] ->
-                    case find_leftmost(SNodeId, Tree) of
-                        {{ok, _, NextNode}, Tree2} ->
-                            {{ok, 1, NextNode}, Tree2};
-                        {{error, Reason}, Tree2} ->
-                            {{error, Reason}, Tree2}
-                    end
-            end
+            find_next_using_path(Tree, Path)
     end.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Helper function to find_next_in_leaf/4 used when next key
+%% has not been found in checked node (out_of_range error has appeared).
+%% @end
+%%--------------------------------------------------------------------
+-spec find_next_using_path(bp_tree:tree(), [bp_tree_node:id()]) -> find_pos_result().
+find_next_using_path(Tree, Path) ->
+    Path2 = lists:dropwhile(fun(SNodeId) -> SNodeId == ?NIL end, Path),
+    case Path2 of
+        [] ->
+            {{error, not_found}, Tree};
+        [SNodeId | _] ->
+            case find_leftmost(SNodeId, Tree) of
+                {{ok, _, NextNode}, Tree2} ->
+                    {{ok, 1, NextNode}, Tree2};
+                {{error, Reason}, Tree2} ->
+                    {{error, Reason}, Tree2}
+            end
+    end.
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
