@@ -113,8 +113,8 @@ init(Opts) ->
                 Error
         end
     catch
-        _:Reason ->
-            {ErrorAns, _} = handle_exception(Reason, erlang:get_stacktrace(), undefined),
+        _:Reason:Stacktrace ->
+            {ErrorAns, _} = handle_exception(Reason, Stacktrace, undefined),
             ErrorAns
     end.
 
@@ -209,7 +209,7 @@ find(Key, Tree = #bp_tree{}) ->
         {[{_, Leaf} | _], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
         {bp_tree_node:find(Key, Leaf), Tree3}
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
     end.
 
 %%--------------------------------------------------------------------
@@ -234,7 +234,7 @@ insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
                 insert(Items, Path, Tree5)
         end
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree0)
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree0)
     end.
 
 %%%%--------------------------------------------------------------------
@@ -250,7 +250,7 @@ remove([{Key, _} | _] = Items, Tree = #bp_tree{}) ->
         {Path, Tree3} = bp_tree_path:find(Key, RootId, Tree2),
         remove(Items, Path, ?NIL, Tree3)
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
     end.
 
 %%--------------------------------------------------------------------
@@ -273,7 +273,7 @@ fold(Init, Fun, Acc, Tree) ->
     try
         fold_unsafe(Init, Fun, Acc, Tree)
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
     end.
 
 %%--------------------------------------------------------------------
