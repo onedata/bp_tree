@@ -9,7 +9,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(bp_tree_test).
--author("krzysztof").
+-author("Krzysztof Trzepla").
 
 -include("bp_tree.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -32,6 +32,9 @@ new_should_use_custom_options_test_() ->
             meck:new(StoreModule, [non_strict]),
             meck:expect(StoreModule, init, fun(Args) when Args =:= StoreArgs ->
                 {ok, state}
+            end),
+            meck:expect(StoreModule, get_root_id, fun(State) ->
+                {{error, not_found}, State}
             end)
         end,
         fun(_) ->
@@ -48,6 +51,11 @@ new_should_use_custom_options_test_() ->
             {store_args, StoreArgs}
         ]))
     }.
+
+
+find_should_return_not_found_error_test() ->
+    {ok, Tree} = bp_tree:init([]),
+    {{error, not_found}, Tree} = bp_tree:find(<<"someKey">>, Tree).
 
 insert_find_permutation_should_succeed_test() ->
     lists:foreach(fun(Seq) ->
@@ -87,14 +95,14 @@ insert_remove_fold_random_seq_should_succeed_test_() ->
             [{Name2, fun() ->
                 remove_and_fold(Seq, insert(Seq, Tree))
             end} | Tests2]
-        end, Tests, [10, 50, 100, 500])
-    end, [], [1, 2, 5, 10, 50])).
+        end, Tests, [10, 50, 100, 200, 500])
+    end, [], [2, 5, 10, 15, 20, 50])).
 
-fold_should_return_empty_for_empty_tree_test() ->
+fold_should_return_not_found_error_test() ->
     {ok, Tree} = bp_tree:init([]),
-    {ok, [], _} = bp_tree:fold(fun(K, _V, Acc) ->
+    {{error, not_found}, _} = bp_tree:fold(fun(K, _V, Acc) ->
         [K | Acc]
-    end, [], Tree, []).
+    end, [], Tree).
 
 fold_should_process_keys_in_ascending_order_test_() ->
     lists:reverse(lists:foldl(fun(Order, Tests) ->
@@ -106,76 +114,59 @@ fold_should_process_keys_in_ascending_order_test_() ->
             Name2 = lists:flatten(Name),
             [{Name2, fun() ->
                 Tree2 = insert(RandomSeq, Tree),
-                {ok, Keys, _} = bp_tree:fold(fun(K, _V, Acc) ->
+                {ok, Keys, _} = fold({offset, 0}, fun(K, _V, Acc) ->
                     [K | Acc]
-                end, [], Tree2, []),
-                ?assertEqual(Seq, lists:reverse(Keys))
+                end, [], Tree2),
+                ?assertEqual(Seq, Keys)
             end} | Tests2]
         end, Tests, [10, 50, 100, 500, 1000, 5000, 10000])
     end, [], [1, 2, 5, 10, 50, 100])).
 
-fold_should_return_keys_from_range_test_() ->
+fold_should_return_keys_from_start_key_test_() ->
     {ok, Tree} = bp_tree:init([{order, 1}]),
-    Seq = lists:seq(1, 10),
+    End = 100,
+    Seq = lists:seq(1, End),
     RandomSeq = random_shuffle(Seq),
     Tree2 = insert(RandomSeq, Tree),
     lists:foldl(fun(Start, Tests) ->
-        lists:foldl(fun(End, Tests2) ->
-            Name = io_lib:format("start: ~p, end: ~p", [Start, End]),
-            Name2 = lists:flatten(Name),
-            [{Name2, fun() ->
-                {ok, Keys, _} = bp_tree:fold(fun(K, _V, Acc) ->
-                    [K | Acc]
-                end, [], Tree2, [{start_key, Start}, {end_key, End}]),
-                ?assertEqual(lists:seq(Start, End), lists:reverse(Keys))
-            end} | Tests2]
-        end, Tests, lists:seq(Start, 10))
-    end, [], lists:seq(1, 10)).
+        Name = io_lib:format("start: ~p", [Start]),
+        Name2 = lists:flatten(Name),
+        [{Name2, fun() ->
+            {ok, Keys, _} = fold({start_key, Start}, fun(K, _V, Acc) ->
+                [K | Acc]
+            end, [], Tree2),
+            ?assertEqual(lists:seq(Start, End), Keys)
+        end} | Tests]
+    end, [], lists:seq(1, End)).
 
 fold_should_return_keys_from_offset_test_() ->
     {ok, Tree} = bp_tree:init([{order, 1}]),
-    Seq = lists:seq(1, 100),
+    End = 100,
+    Seq = lists:seq(1, End),
     RandomSeq = random_shuffle(Seq),
     Tree2 = insert(RandomSeq, Tree),
     lists:map(fun(Offset) ->
         Name = io_lib:format("offset: ~p", [Offset]),
         Name2 = lists:flatten(Name),
         {Name2, fun() ->
-            {ok, Keys, _} = bp_tree:fold(fun(K, _V, Acc) ->
+            {ok, Keys, _} = fold({offset, Offset}, fun(K, _V, Acc) ->
                 [K | Acc]
-            end, [], Tree2, [{offset, Offset}]),
-            ?assertEqual(lists:seq(Offset + 1, 100), lists:reverse(Keys))
+            end, [], Tree2),
+            ?assertEqual(lists:seq(Offset + 1, End), Keys)
         end}
-    end, lists:seq(0, 100)).
+    end, lists:seq(0, End)).
 
-fold_should_return_up_to_total_size_keys_test_() ->
-    {ok, Tree} = bp_tree:init([{order, 2}]),
-    Seq = lists:seq(1, 100),
+prev_node_test() ->
+    {ok, Tree} = bp_tree:init([{order, 1}]),
+    Start = 1,
+    End = 100,
+    Seq = lists:seq(Start, End),
     RandomSeq = random_shuffle(Seq),
     Tree2 = insert(RandomSeq, Tree),
-    lists:map(fun(Size) ->
-        Name = io_lib:format("total size: ~p", [Size]),
-        Name2 = lists:flatten(Name),
-        {Name2, fun() ->
-            {ok, Keys, _} = bp_tree:fold(fun(K, _V, Acc) ->
-                [K | Acc]
-            end, [], Tree2, [{total_size, Size}]),
-            ?assertEqual(lists:seq(1, Size), lists:reverse(Keys))
-        end}
-    end, lists:seq(0, 100)).
-
-fold_should_return_keys_in_batch_test() ->
-    {ok, Tree} = bp_tree:init([{order, 2}]),
-    Seq = lists:seq(1, 100),
-    RandomSeq = random_shuffle(Seq),
-    Tree2 = insert(RandomSeq, Tree),
-    {continue, Token, Keys, Tree3} = bp_tree:fold(fun(K, _V, Acc) ->
+    {ok, Keys, _} = fold_and_check_prev_nodes({start_key, Start}, fun(K, _V, Acc) ->
         [K | Acc]
-    end, [], Tree2, [{batch_size, 50}]),
-    ?assertEqual(lists:seq(1, 50), lists:reverse(Keys)),
-    {continue, Token2, Keys2, Tree4} = bp_tree:fold(Token, [], Tree3),
-    ?assertEqual(lists:seq(51, 100), lists:reverse(Keys2)),
-    {ok, [], _} = bp_tree:fold(Token2, [], Tree4).
+    end, [], Tree2, undefined),
+    ?assertEqual(Seq, Keys).
 
 %%====================================================================
 %% Internal functions
@@ -184,7 +175,7 @@ fold_should_return_keys_in_batch_test() ->
 insert([], Tree) ->
     Tree;
 insert([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:insert(X, X, Tree),
+    {ok, [X], Tree2} = bp_tree:insert([{X, X}], Tree),
     insert(Seq, Tree2).
 
 find([], Tree) ->
@@ -196,19 +187,58 @@ find([X | Seq], Tree) ->
 remove([], Tree) ->
     Tree;
 remove([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:remove(X, Tree),
+    {ok, [X], Tree2} = bp_tree:remove([{X, fun(_) -> true end}], Tree),
     remove(Seq, Tree2).
 
 remove_and_fold([], Tree) ->
     fold([], Tree);
 remove_and_fold([X | Seq], Tree) ->
-    {ok, Tree2} = bp_tree:remove(X, Tree),
+    {ok, [X], Tree2} = bp_tree:remove([{X, fun(_) -> true end}], Tree),
     Tree3 = fold(Seq, Tree2),
     remove_and_fold(Seq, Tree3).
 
+fold(Arg, Fun, Acc, Tree) ->
+    case bp_tree:fold(Arg, Fun, Acc, Tree) of
+        {{ok, {Acc2, undefined}}, Tree2} -> {ok, lists:reverse(Acc2), Tree2};
+        {{ok, {Acc2, N}}, Tree2} -> fold({node_id, N}, Fun, Acc2, Tree2);
+        {{error, not_found}, Tree2} -> {ok, lists:reverse(Acc), Tree2};
+        {{error, Reason}, Tree2} -> {{error, Reason}, Tree2}
+    end.
+
+fold_and_check_prev_nodes(Arg, Fun, Acc, Tree0, PrevNode) ->
+    {PrevNode2, Tree} = check_prev_node(PrevNode, Tree0, Arg, Acc),
+    case bp_tree:fold(Arg, Fun, Acc, Tree) of
+        {{ok, {Acc2, undefined}}, Tree2} -> {ok, lists:reverse(Acc2), Tree2};
+        {{ok, {Acc2, N}}, Tree2} -> fold_and_check_prev_nodes({node_id, N},
+            Fun, Acc2, Tree2, PrevNode2);
+        {{error, not_found}, Tree2} -> {ok, lists:reverse(Acc), Tree2};
+        {{error, Reason}, Tree2} -> {{error, Reason}, Tree2}
+    end.
+
+check_prev_node(PrevNode, Tree, {start_key, Key}, Acc) ->
+    {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
+    {[{NodeID, _Leaf} | _], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
+    check_prev_node(PrevNode, Tree3, {node_id, NodeID}, Acc);
+check_prev_node(PrevNode, Tree, {node_id, N}, Acc) ->
+    Tree2 = assert_prev_node(N, PrevNode, Tree, Acc),
+    {N, Tree2}.
+
+assert_prev_node(CurrentNode, PrevNode, Tree, Acc) ->
+    {PrevNodeID, _, Tree2} = bp_tree:get_prev_leaf({node, CurrentNode}, Tree),
+    ?assertEqual(PrevNode, PrevNodeID),
+
+    case Acc of
+        [Link | _] ->
+            {PrevNodeID2, _, Tree3} = bp_tree:get_prev_leaf({key, Link + 1}, Tree2),
+            ?assertEqual(PrevNode, PrevNodeID2),
+            Tree3;
+        _ ->
+            Tree2
+    end.
+
 fold(Seq, Tree) ->
-    {ok, L, Tree2} = bp_tree:fold(fun(K, _V, A) -> [K | A] end, [], Tree, []),
-    ?assertEqual(lists:sort(Seq), lists:reverse(L)),
+    {ok, L, Tree2} = fold({offset, 0}, fun(K, _V, A) -> [K | A] end, [], Tree),
+    ?assertEqual(lists:sort(Seq), L),
     Tree2.
 
 permute([]) -> [[]];

@@ -21,7 +21,7 @@
 -record(state, {
     root_id :: undefined | bp_tree_node:id(),
     next_node_id = 1 :: pos_integer(),
-    map :: maps:map([{bp_tree_node:id(), bp_tree:node()}])
+    map :: #{bp_tree_node:id() => bp_tree:tree_node()}
 }).
 
 -type state() :: #state{}.

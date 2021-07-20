@@ -20,10 +20,10 @@
 
 %% API exports
 -export([new/1, size/1]).
--export([get/2, update/3, remove/2]).
--export([find/2, lower_bound/2]).
+-export([get/2, update/3, remove/2, remove/3]).
+-export([find/2, find_value/2, lower_bound/2]).
 -export([insert/3, append/3, prepend/3, split/1, merge/2]).
--export([to_list/1, from_list/1]).
+-export([to_list/1, from_list/1, to_map/1, from_map/1]).
 
 -record(bp_tree_array, {
     size,
@@ -32,8 +32,9 @@
 
 -type key() :: any().
 -type value() :: any().
--type selector() :: key | left | right | both.
+-type selector() :: key | left | right | both | lower_bound | lower_bound_key.
 -type pos() :: non_neg_integer() | first | last.
+-type remove_pred() :: fun((value()) -> boolean()).
 -opaque array() :: #bp_tree_array{}.
 
 -export_type([array/0, selector/0]).
@@ -51,7 +52,7 @@
 new(Size) ->
     #bp_tree_array{
         size = 0,
-        data = list_to_tuple(lists:duplicate(2 * Size + 1, ?NIL))
+        data = erlang:make_tuple(2 * Size + 1, ?NIL)
     }.
 
 %%--------------------------------------------------------------------
@@ -70,6 +71,12 @@ size(#bp_tree_array{size = Size}) ->
 %%--------------------------------------------------------------------
 -spec get({selector(), pos()}, array()) ->
     {ok, value() | {value(), value()}} | {error, out_of_range}.
+get({lower_bound, Key}, Array) ->
+    Pos = lower_bound(Key, Array),
+    get({left, Pos}, Array);
+get({lower_bound_key, Key}, Array) ->
+    Pos = lower_bound(Key, Array),
+    get({key, Pos}, Array);
 get({Selector, first}, Array = #bp_tree_array{}) ->
     get({Selector, 1}, Array);
 get({Selector, last}, Array = #bp_tree_array{size = Size}) ->
@@ -130,6 +137,18 @@ find(Key, Array = #bp_tree_array{}) ->
         {ok, Key} -> {ok, Pos};
         {ok, _} -> {error, not_found};
         {error, out_of_range} -> {error, not_found}
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns value for a key in an array or fails with a missing error.
+%% @end
+%%--------------------------------------------------------------------
+-spec find_value(key(), array()) -> {ok, value()} | {error, not_found}.
+find_value(Key, Array = #bp_tree_array{}) ->
+    case find(Key, Array) of
+        {ok, Pos} -> get({left, Pos}, Array);
+        {error, Reason} -> {error, Reason}
     end.
 
 %%--------------------------------------------------------------------
@@ -202,12 +221,29 @@ prepend({Selector, Key}, Value, Array = #bp_tree_array{}) ->
 %% Removes a key and associated value from an array.
 %% @end
 %%--------------------------------------------------------------------
--spec remove({selector(), key()}, array()) -> {ok, array()} | {error, term()}.
+-spec remove({selector(), key()}, array()) ->
+    {ok, array()} | {error, term()}.
 remove({Selector, Key}, Array = #bp_tree_array{}) ->
+    remove({Selector, Key}, fun(_) -> true end, Array).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Removes a key and associated value from an array if predicate is satisfied.
+%% @end
+%%--------------------------------------------------------------------
+-spec remove({selector(), key()}, remove_pred(), array()) ->
+    {ok, array()} | {error, term()}.
+remove({Selector, Key}, Pred, Array = #bp_tree_array{}) ->
     case find(Key, Array) of
-        {ok, Pos} when Selector =:= left -> {ok, shift_left(Pos, 0, Array)};
-        {ok, Pos} when Selector =:= right -> {ok, shift_left(Pos, 1, Array)};
-        {error, Reason} -> {error, Reason}
+        {ok, Pos} ->
+            {ok, Value} = get({Selector, Pos}, Array),
+            case Pred(Value) of
+                true when Selector =:= left -> {ok, shift_left(Pos, 0, Array)};
+                true when Selector =:= right -> {ok, shift_left(Pos, 1, Array)};
+                false -> {error, predicate_not_satisfied}
+            end;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 %%--------------------------------------------------------------------
@@ -221,7 +257,7 @@ split(Array = #bp_tree_array{size = Size, data = Data}) ->
     Begin = 2 * Pivot,
     SplitKey = element(Begin, Data),
     LData = setelement(Begin, Data, ?NIL),
-    RData = list_to_tuple(lists:duplicate(erlang:size(Data), ?NIL)),
+    RData = erlang:make_tuple(erlang:size(Data), ?NIL),
     {LData3, RData3} = lists:foldl(fun(Pos, {LData2, RData2}) ->
         {
             setelement(Begin + Pos, LData2, ?NIL),
@@ -269,6 +305,39 @@ from_list(List) ->
         size = Len div 2,
         data = list_to_tuple(List)
     }.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Converts an array into a map.
+%% @end
+%%--------------------------------------------------------------------
+-spec to_map(array()) -> #{key() => value()}.
+to_map(Array = #bp_tree_array{}) ->
+    List = to_list(Array),
+    to_map(List, #{?SIZE_KEY => length(List)}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Converts a map into an array.
+%% @end
+%%--------------------------------------------------------------------
+-spec from_map(#{key() => value()}) -> array().
+from_map(Map) ->
+    Size = maps:get(?SIZE_KEY, Map),
+    List = maps:fold(fun
+        (?LAST_KEY, _, Acc) -> Acc;
+        (?SIZE_KEY, _, Acc) -> Acc;
+        (Key, Value, Acc) -> [{Key, Value} | Acc]
+    end, [], Map),
+    List2 = lists:sort(List),
+    List3 = lists:foldl(fun({Key, Value}, Acc) ->
+        [Key, Value | Acc]
+    end, [], List2),
+    List4 = [maps:get(?LAST_KEY, Map, ?NIL) | List3],
+    List5 = lists:foldl(fun(_, Acc) ->
+        [?NIL | Acc]
+    end, List4, lists:seq(1, Size - length(List4))),
+    from_list(lists:reverse(List5)).
 
 %%====================================================================
 %% Internal functions
@@ -326,3 +395,23 @@ shift_right(Begin, Array = #bp_tree_array{size = Size, data = Data}) ->
         size = Size + 1,
         data = Data3
     }.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Converts list format of an array into a map.
+%% @end
+%%--------------------------------------------------------------------
+-spec to_map(list(), map()) -> map().
+to_map([], Map) ->
+    Map;
+to_map([?NIL], Map) ->
+    Map;
+to_map([Value], Map) ->
+    Map#{?LAST_KEY => Value};
+to_map([?NIL, ?NIL | _], Map) ->
+    Map;
+to_map([Value, ?NIL | _], Map) ->
+    Map#{?LAST_KEY => Value};
+to_map([Value, Key | List], Map) ->
+    to_map(List, maps:put(Key, Value, Map)).

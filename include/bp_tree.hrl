@@ -13,6 +13,8 @@
 -define(BP_TREE_HRL, 1).
 
 -define(NIL, null).
+-define(LAST_KEY, <<"_last">>).
+-define(SIZE_KEY, <<"_size">>).
 
 -record(bp_tree, {
     order :: bp_tree:order(),
@@ -22,7 +24,9 @@
 
 -record(bp_tree_node, {
     leaf :: boolean(),
-    children :: bp_tree_array:array()
+    children :: bp_tree_children:children(),
+    order :: undefined | non_neg_integer(),
+    rebalance_info :: bp_tree_node:rebalance_info()
 }).
 
 -endif.
