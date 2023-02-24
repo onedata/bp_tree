@@ -22,9 +22,10 @@
 -export([find/2, find_pos/2, lower_bound/2, left_sibling/2]).
 -export([insert/3, remove/2, merge/3, split/1]).
 -export([rotate_right/4, rotate_left/4]).
--export([fold/4]).
+-export([fold/4, fold_all_children_ids/3]).
 -export([get_rebalance_info/1, set_rebalance_info/2]).
 -export([get_order/1, set_order/2]).
+-export([is_leaf/1]).
 
 -type id() :: any().
 -type rebalance_info() :: undefined | [{bp_tree_node:id(), bp_tree:key()}].
@@ -346,8 +347,22 @@ rotate_left(LNode, ParentKey, RNode, Order) ->
 %%--------------------------------------------------------------------
 -spec fold(bp_tree:fold_start_spec(), bp_tree:tree_node(),
     bp_tree:fold_fun(), bp_tree:fold_acc()) -> bp_tree:fold_acc().
-fold(KeyOrPos, #bp_tree_node{children = LChildren}, Fun, Acc) ->
+fold(KeyOrPos, #bp_tree_node{leaf = true, children = LChildren}, Fun, Acc) ->
     bp_tree_children:fold(KeyOrPos, LChildren, Fun, Acc).
+
+
+-spec fold_all_children_ids(bp_tree:tree_node(), fun((bp_tree:value(), bp_tree:fold_acc()) -> bp_tree:fold_acc()),
+    bp_tree:fold_acc()) -> bp_tree:fold_acc().
+fold_all_children_ids(#bp_tree_node{leaf = false, children = LChildren}, Fun, Acc) ->
+    FunWithKeysIgnored = fun(_, ChildId, FoldAcc) ->
+        Fun(ChildId, FoldAcc)
+    end,
+    Acc2 = bp_tree_children:fold(all, LChildren, FunWithKeysIgnored, Acc),
+    case bp_tree_children:get({right, last}, LChildren) of
+        {ok, ?NIL} -> Acc2;
+        {ok, LastId} -> Fun(LastId, Acc2)
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -386,6 +401,11 @@ get_order(#bp_tree_node{order = Order}) ->
     bp_tree:tree_node().
 set_order(Node, Order) ->
     Node#bp_tree_node{order = Order}.
+
+
+-spec is_leaf(bp_tree:tree_node()) -> boolean().
+is_leaf(#bp_tree_node{leaf = IsLeaf}) ->
+    IsLeaf.
 
 %%====================================================================
 %% Internal functions
