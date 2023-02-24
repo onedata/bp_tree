@@ -282,7 +282,7 @@ force_all_nodes_update(Tree) ->
     try
         force_all_nodes_update_unsafe(Tree)
     catch
-        _:Error -> handle_exception(Error, erlang:get_stacktrace(), Tree)
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
     end.
 
 
