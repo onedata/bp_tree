@@ -277,7 +277,7 @@ fold(Init, Fun, Acc, Tree) ->
     end.
 
 
--spec force_all_nodes_update(tree()) -> {ok, tree()}.
+-spec force_all_nodes_update(tree()) -> {ok | error() | error_stacktrace(), tree()}.
 force_all_nodes_update(Tree) ->
     try
         force_all_nodes_update_unsafe(Tree)
