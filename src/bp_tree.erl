@@ -67,14 +67,14 @@ init() ->
 %% Creates B+ tree handle.
 %% @end
 %%--------------------------------------------------------------------
--spec init([init_opt()]) -> {ok | broken_root, tree()} | error().
+-spec init([init_opt()]) -> {ok | broken_root | error(), tree()}.
 init(Opts) ->
+    Args = proplists:get_value(store_args, Opts, []),
+    Tree = #bp_tree{
+        order = proplists:get_value(order, Opts, 50),
+        store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
+    },
     try
-        Args = proplists:get_value(store_args, Opts, []),
-        Tree = #bp_tree{
-            order = proplists:get_value(order, Opts, 50),
-            store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
-        },
         ReadOnly = proplists:get_value(read_only, Opts, false),
         put(read_only, ReadOnly),
 
@@ -103,19 +103,19 @@ init(Opts) ->
                                 {broken_root, Tree5};
                             {{{error, not_found}, Tree4}, true} ->
                                 {broken_root, Tree4};
-                            {{RootError, _Tree4}, _} ->
-                                RootError
+                            {{RootError, Tree4}, _} ->
+                                {RootError, Tree4}
                         end;
                     {_, Tree3} ->
                         {ok, Tree3}
                 end;
             Error ->
-                Error
+                {Error, Tree}
         end
     catch
         _:Reason:Stacktrace ->
             {ErrorAns, _} = handle_exception(Reason, Stacktrace, undefined),
-            ErrorAns
+            {ErrorAns, Tree}
     end.
 
 %%--------------------------------------------------------------------
