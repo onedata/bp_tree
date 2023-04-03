@@ -24,6 +24,7 @@
 
 -record(bp_tree_node, {
     leaf :: boolean(),
+    % NOTE - if node is leaf, children are values stored by bp_tree (otherwise, children are ids of nodes)
     children :: bp_tree_children:children(),
     order :: undefined | non_neg_integer(),
     rebalance_info :: bp_tree_node:rebalance_info()
