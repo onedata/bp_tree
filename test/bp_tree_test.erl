@@ -168,6 +168,26 @@ prev_node_test() ->
     end, [], Tree2, undefined),
     ?assertEqual(Seq, Keys).
 
+force_all_nodes_update_test_() ->
+    lists:reverse(lists:foldl(fun(Order, Tests) ->
+        lists:foldl(fun(Size, Tests2) ->
+            {ok, Tree} = bp_tree:init([{order, Order}]),
+            Seq = lists:seq(1, Size),
+            RandomSeq = random_shuffle(Seq),
+            Name = io_lib:format("order: ~p, size: ~p", [Order, Size]),
+            Name2 = lists:flatten(Name),
+            [{Name2, fun() ->
+                #bp_tree{store_state = State} = Tree2 = insert(RandomSeq, Tree),
+                Ans = bp_tree:force_all_nodes_update(Tree2),
+                ?assertMatch({ok, _}, Ans),
+                {ok, #bp_tree{store_state = State2}} = Ans,
+                UpdateHistory = bp_tree_map_store:get_update_history(State2) --
+                    bp_tree_map_store:get_update_history(State),
+                ?assertEqual(lists:sort(bp_tree_map_store:get_node_keys(State2)), lists:sort(UpdateHistory))
+            end} | Tests2]
+        end, Tests, [10, 50, 100, 500, 1000, 5000, 10000])
+    end, [], [1, 2, 5, 10, 50, 100])).
+
 %%====================================================================
 %% Internal functions
 %%====================================================================

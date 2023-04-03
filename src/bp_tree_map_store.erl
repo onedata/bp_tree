@@ -18,10 +18,15 @@
 -export([set_root_id/2, unset_root_id/1, get_root_id/1]).
 -export([create_node/2, get_node/2, update_node/3, delete_node/2]).
 
+% API
+-export([get_node_keys/1, get_update_history/1]).
+
+
 -record(state, {
     root_id :: undefined | bp_tree_node:id(),
     next_node_id = 1 :: pos_integer(),
-    map :: #{bp_tree_node:id() => bp_tree:tree_node()}
+    map :: #{bp_tree_node:id() => bp_tree:tree_node()},
+    update_history = [] :: [pos_integer()]
 }).
 
 -type state() :: #state{}.
@@ -107,9 +112,9 @@ get_node(NodeId, State = #state{map = Map}) ->
 %%--------------------------------------------------------------------
 -spec update_node(bp_tree_node:id(), bp_tree:tree_node(), state()) ->
     {ok | {error, term()}, state()}.
-update_node(NodeId, Node, State = #state{map = Map}) ->
+update_node(NodeId, Node, State = #state{map = Map, update_history = UpdateHistory}) ->
     case maps:find(NodeId, Map) of
-        {ok, _} -> {ok, State#state{map = maps:put(NodeId, Node, Map)}};
+        {ok, _} -> {ok, State#state{map = maps:put(NodeId, Node, Map), update_history = [NodeId | UpdateHistory]}};
         error -> {{error, not_found}, State}
     end.
 
@@ -134,3 +139,17 @@ delete_node(NodeId, State = #state{map = Map}) ->
 -spec terminate(state()) -> ok.
 terminate(_State) ->
     ok.
+
+
+%%====================================================================
+%% API
+%%====================================================================
+
+-spec get_node_keys(state()) -> [bp_tree_node:id()].
+get_node_keys(#state{map = Nodes}) ->
+    maps:keys(Nodes).
+
+
+-spec get_update_history(state()) -> [pos_integer()].
+get_update_history(#state{update_history = History}) ->
+    History.

@@ -15,7 +15,7 @@
 
 %% API exports
 -export([init/0, init/1, terminate/1, update_store_state/2]).
--export([find/2, insert/2, remove/2, fold/3, fold/4]).
+-export([find/2, insert/2, remove/2, fold/3, fold/4, force_all_nodes_update/1]).
 -export([get_prev_leaf/2]).
 
 -type key() :: term().
@@ -276,6 +276,16 @@ fold(Init, Fun, Acc, Tree) ->
         _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
     end.
 
+
+-spec force_all_nodes_update(tree()) -> {ok | error() | error_stacktrace(), tree()}.
+force_all_nodes_update(Tree) ->
+    try
+        force_all_nodes_update_unsafe(Tree)
+    catch
+        _:Error:Stacktrace -> handle_exception(Error, Stacktrace, Tree)
+    end.
+
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Calls Fun(Key, Value, Acc) on successive elements of a B+ tree leaf.
@@ -342,6 +352,31 @@ get_prev_leaf({key, Key}, Tree) ->
     {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
     {[{NodeId, _Node} | Path], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
     get_prev_leaf(Path, NodeId, Key, Tree3).
+
+
+-spec force_all_nodes_update_unsafe(tree()) -> {ok, tree()}.
+force_all_nodes_update_unsafe(Tree) ->
+    case bp_tree_store:get_root_id(Tree) of
+        {{ok, RootId}, Tree2} ->
+            {{ok, Node}, Tree3} =  bp_tree_store:get_node(RootId, Tree2),
+            force_all_nodes_update_unsafe(RootId, Node, Tree3);
+        {{error, not_found}, Tree2} ->
+            {ok, Tree2}
+    end.
+
+
+-spec force_all_nodes_update_unsafe(bp_tree_node:id(), tree_node(), tree()) -> {ok, tree()}.
+force_all_nodes_update_unsafe(NodeId, Node, Tree) ->
+    {ok, Tree2} = bp_tree_store:update_node(NodeId, Node, Tree),
+    case bp_tree_node:is_leaf(Node) of
+        true ->
+            {ok, Tree2};
+        false ->
+            bp_tree_node:fold_all_children_ids(Node, fun(ChildId, {ok, TreeAcc}) ->
+                {{ok, ChildNode}, TreeAcc2} =  bp_tree_store:get_node(ChildId, TreeAcc),
+                force_all_nodes_update_unsafe(ChildId, ChildNode, TreeAcc2)
+            end, {ok, Tree2})
+    end.
 
 %%====================================================================
 %% Internal functions

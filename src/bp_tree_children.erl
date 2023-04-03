@@ -66,7 +66,7 @@ size(#bp_tree_children{data = Tree}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Returns an item..
+%% Returns an item.
 %% @end
 %%--------------------------------------------------------------------
 -spec get({selector(), pos()}, children()) ->
