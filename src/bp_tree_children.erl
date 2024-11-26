@@ -15,7 +15,7 @@
 
 %% API exports
 -export([new/1, size/1]).
--export([get/2, update_last_value/2, remove/2]).
+-export([get_key/2, get_value/2, update_last_value/2, remove/2]).
 -export([find/2, find_value/2, lower_bound/2]).
 -export([insert/3, append/3, prepend/3, split/1, merge/2]).
 -export([to_map/1, from_map/1]).
@@ -30,14 +30,18 @@
     max_size :: bp_tree:order() % only to allow conversion with bp_tree_array
 }).
 
--type key() :: any().
--type value() :: any().
--type selector() :: key | left | right | both | lower_bound | lower_bound_key.
--type pos() :: non_neg_integer() | first | last.
--type remove_pred() :: fun((value()) -> boolean()).
 -opaque children() :: #bp_tree_children{}.
+-type selector() :: left | right | both | lower_bound | lower_bound_key.
 
 -export_type([children/0, selector/0]).
+
+
+% internal types
+-type key() :: bp_tree:key().
+-type value() :: bp_tree:value().
+-type pos() :: non_neg_integer() | first | last.
+-type remove_pred() :: fun((value()) -> boolean()).
+
 
 %%====================================================================
 %% API functions
@@ -64,30 +68,57 @@ new(MaxSize) ->
 size(#bp_tree_children{data = Tree}) ->
     gb_trees:size(Tree).
 
+
+-spec get_key(pos(), children()) -> {ok, key()} | {error, out_of_range}.
+get_key(first, #bp_tree_children{data = Tree}) ->
+    case gb_trees:is_empty(Tree) of
+        true ->
+            {error, out_of_range};
+        _ ->
+            {Key, _Value} = gb_trees:smallest(Tree),
+            {ok, Key}
+    end;
+get_key(last, #bp_tree_children{data = Tree}) ->
+    case gb_trees:is_empty(Tree) of
+        true ->
+            {error, out_of_range};
+        _ ->
+            {Key, _Value} = gb_trees:largest(Tree),
+            {ok, Key}
+    end;
+get_key(Pos, #bp_tree_children{data = Tree}) ->
+    case get_pos(Pos, Tree) of
+        {Key, _Value, _It} ->
+            {ok, Key};
+        {error, out_of_range} ->
+            {error, out_of_range}
+    end.
+
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Returns an item.
 %% @end
 %%--------------------------------------------------------------------
--spec get({selector(), pos()}, children()) ->
+-spec get_value({selector(), pos()}, children()) ->
     {ok, value() | {value(), value()}} | {error, out_of_range}.
-get({lower_bound, Key}, #bp_tree_children{data = Tree}) ->
-    It =  gb_trees:iterator_from(Key, Tree),
+get_value({lower_bound, Pos}, #bp_tree_children{data = Tree}) ->
+    It =  gb_trees:iterator_from(Pos, Tree),
     case gb_trees:next(It) of
         {_, Value, _} ->
             {ok, Value};
         none ->
             {error, out_of_range}
     end;
-get({lower_bound_key, Key}, #bp_tree_children{data = Tree}) ->
-    It =  gb_trees:iterator_from(Key, Tree),
+get_value({lower_bound_key, Pos}, #bp_tree_children{data = Tree}) ->
+    It =  gb_trees:iterator_from(Pos, Tree),
     case gb_trees:next(It) of
         {LKey, _, _} ->
             {ok, LKey};
         none ->
             {error, out_of_range}
     end;
-get({left, first}, #bp_tree_children{data = Tree}) ->
+get_value({left, first}, #bp_tree_children{data = Tree}) ->
     case gb_trees:is_empty(Tree) of
         true ->
             {error, out_of_range};
@@ -95,15 +126,7 @@ get({left, first}, #bp_tree_children{data = Tree}) ->
             {_K, V} = gb_trees:smallest(Tree),
             {ok, V}
     end;
-get({key, first}, #bp_tree_children{data = Tree}) ->
-    case gb_trees:is_empty(Tree) of
-        true ->
-            {error, out_of_range};
-        _ ->
-            {K, _V} = gb_trees:smallest(Tree),
-            {ok, K}
-    end;
-get({left, last}, #bp_tree_children{data = Tree}) ->
+get_value({left, last}, #bp_tree_children{data = Tree}) ->
     case gb_trees:is_empty(Tree) of
         true ->
             {error, out_of_range};
@@ -111,15 +134,7 @@ get({left, last}, #bp_tree_children{data = Tree}) ->
             {_K, V} = gb_trees:largest(Tree),
             {ok, V}
     end;
-get({key, last}, #bp_tree_children{data = Tree}) ->
-    case gb_trees:is_empty(Tree) of
-        true ->
-            {error, out_of_range};
-        _ ->
-            {K, _V} = gb_trees:largest(Tree),
-            {ok, K}
-    end;
-get({both, last}, #bp_tree_children{data = Tree, last_value = LV}) ->
+get_value({both, last}, #bp_tree_children{data = Tree, last_value = LV}) ->
     case gb_trees:is_empty(Tree) of
         true ->
             {error, out_of_range};
@@ -127,9 +142,9 @@ get({both, last}, #bp_tree_children{data = Tree, last_value = LV}) ->
             {_K, V} = gb_trees:largest(Tree),
             {ok, {V, LV}}
     end;
-get({right, last}, #bp_tree_children{last_value = LV}) ->
+get_value({right, last}, #bp_tree_children{last_value = LV}) ->
     {ok, LV};
-get({right, 0}, #bp_tree_children{data = Tree, last_value = LV}) ->
+get_value({right, 0}, #bp_tree_children{data = Tree, last_value = LV}) ->
     case gb_trees:is_empty(Tree) of
         true ->
             {ok, LV};
@@ -137,21 +152,14 @@ get({right, 0}, #bp_tree_children{data = Tree, last_value = LV}) ->
             {_K, V} = gb_trees:smallest(Tree),
             {ok, V}
     end;
-get({left, Pos}, #bp_tree_children{data = Tree}) ->
+get_value({left, Pos}, #bp_tree_children{data = Tree}) ->
     case get_pos(Pos, Tree) of
         {_Key, Value, _It} ->
             {ok, Value};
         Error ->
             Error
     end;
-get({key, Pos}, #bp_tree_children{data = Tree}) ->
-    case get_pos(Pos, Tree) of
-        {Key, _Value, _It} ->
-            {ok, Key};
-        Error ->
-            Error
-    end;
-get({right, Pos}, #bp_tree_children{data = Tree, last_value = LV}) ->
+get_value({right, Pos}, #bp_tree_children{data = Tree, last_value = LV}) ->
     case get_pos(Pos, Tree) of
         {_Key, _Value, It} ->
             case gb_trees:next(It) of
@@ -163,7 +171,7 @@ get({right, Pos}, #bp_tree_children{data = Tree, last_value = LV}) ->
         Error ->
             Error
     end;
-get({both, Pos}, #bp_tree_children{data = Tree, last_value = LV}) ->
+get_value({both, Pos}, #bp_tree_children{data = Tree, last_value = LV}) ->
     case get_pos(Pos, Tree) of
         {_Key, Value, It} ->
             case gb_trees:next(It) of
@@ -235,7 +243,7 @@ insert({Selector, [{Key, Value} | Tail]},
 %% Appends a key, value or key-value pair.
 %% @end
 %%--------------------------------------------------------------------
--spec append({selector(), key()}, value() | {value(), value()}, children()) ->
+-spec append({key | right | both, key()}, key() | value() | {value(), value()}, children()) ->
     {ok, children()} | {error, out_of_space}.
 append({key, Key}, Key, #bp_tree_children{data = Tree, last_value = LV} = Children) ->
     Tree2 = gb_trees:enter(Key, LV, Tree),
@@ -258,7 +266,7 @@ append({both, Key}, {Value, Next}, #bp_tree_children{data = Tree} = Children) ->
 %% Prepends a key-value pair.
 %% @end
 %%--------------------------------------------------------------------
--spec prepend(key(), value() | {value(), value()}, children()) ->
+-spec prepend(key(), value(), children()) ->
     {ok, children()} | {error, out_of_space}.
 prepend(Key, Value, #bp_tree_children{data = Tree} = Children) ->
     Tree2 = gb_trees:insert(Key, Value, Tree),
@@ -269,7 +277,7 @@ prepend(Key, Value, #bp_tree_children{data = Tree} = Children) ->
 %% Removes keys and associated values.
 %% @end
 %%--------------------------------------------------------------------
--spec remove({selector(), [{key(), remove_pred()}]}, children()) ->
+-spec remove({selector(), key() | [{key(), remove_pred()}]}, children()) ->
     {ok, children(), [key()]} | {error, term()}.
 remove({Selector, [{Key, Pred} | Tail]},
     #bp_tree_children{data = Tree} = Children) ->

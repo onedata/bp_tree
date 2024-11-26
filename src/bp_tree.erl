@@ -18,8 +18,11 @@
 -export([find/2, insert/2, remove/2, fold/3, fold/4, force_all_nodes_update/1]).
 -export([get_prev_leaf/2]).
 
--type key() :: term().
--type value() :: term().
+% used in the external bp_tree API; all keys must conform to the sortkey abstraction
+-type sortkey() :: sortkey:lexicographic() | sortkey:numeric() | sortkey:compound().
+% used internally in the implementation; ?NIL is used to denote empty slots in a link node
+-type key() :: sortkey() | ?NIL.
+-type value() :: term() | ?NIL.
 -type tree() :: #bp_tree{}.
 -type tree_node() :: #bp_tree_node{}.
 -type order() :: pos_integer().
@@ -28,15 +31,15 @@
                     {store_args, bp_tree_store:args()} |
                     {read_only, boolean()}.
 -type remove_pred() :: fun((value()) -> boolean()).
--type fold_init() :: {start_key, key()} |
-                     {prev_key, key()} |
-                     {node_of_key, key()} |
-                     {node_prev_to_key, key()} |
+-type fold_init() :: {start_key, sortkey()} |
+                     {prev_key, sortkey()} |
+                     {node_of_key, sortkey()} |
+                     {node_prev_to_key, sortkey()} |
                      {offset, non_neg_integer()}.
 -type fold_acc() :: any().
--type fold_fun() :: fun((key(), value(), fold_acc()) -> fold_acc()).
+-type fold_fun() :: fun((sortkey(), value(), fold_acc()) -> fold_acc()).
 -type fold_next_node_id() :: bp_tree_node:id() | undefined.
--type fold_start_spec() :: {pos, pos_integer()} | {key, key()} | all.
+-type fold_start_spec() :: {pos, pos_integer()} | {key, sortkey()} | all.
 -type error() :: {error, term()}.
 -type stack_item() :: {
     Module :: module(),
@@ -46,7 +49,7 @@
     {line, Line :: pos_integer()}]}.
 -type error_stacktrace() :: {error, {term(), [stack_item()]}}.
 
--export_type([key/0, value/0, tree/0, tree_node/0, order/0]).
+-export_type([sortkey/0, key/0, value/0, tree/0, tree_node/0, order/0]).
 -export_type([remove_pred/0]).
 -export_type([fold_init/0, fold_acc/0, fold_fun/0, fold_start_spec/0]).
 
@@ -74,8 +77,8 @@ init(Opts) ->
         order = proplists:get_value(order, Opts, 50),
         store_module = proplists:get_value(store_module, Opts, bp_tree_map_store)
     },
+    ReadOnly = proplists:get_value(read_only, Opts, false),
     try
-        ReadOnly = proplists:get_value(read_only, Opts, false),
         put(read_only, ReadOnly),
 
         case bp_tree_store:init(Args, Tree) of
@@ -103,13 +106,13 @@ init(Opts) ->
                                 {broken_root, Tree5};
                             {{{error, not_found}, Tree4}, true} ->
                                 {broken_root, Tree4};
-                            {{RootError, Tree4}, _} ->
+                            {{{error, _} = RootError, Tree4}, _} ->
                                 {RootError, Tree4}
                         end;
                     {_, Tree3} ->
                         {ok, Tree3}
                 end;
-            Error ->
+            {error, _} = Error ->
                 {Error, Tree}
         end
     catch
@@ -201,7 +204,7 @@ terminate(Tree = #bp_tree{order = Order}) ->
 %% Returns a value associated with a key from a B+ tree.
 %% @end
 %%--------------------------------------------------------------------
--spec find(key(), tree()) ->
+-spec find(sortkey(), tree()) ->
     {{ok, value()} | error() | error_stacktrace(), tree()}.
 find(Key, Tree = #bp_tree{}) ->
     try
@@ -217,8 +220,8 @@ find(Key, Tree = #bp_tree{}) ->
 %% Inserts a key-value pairs into a B+ tree.
 %% @end
 %%--------------------------------------------------------------------
--spec insert([{key(), value()}], tree()) ->
-    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
+-spec insert([{sortkey(), value()}], tree()) ->
+    {ok, [sortkey()], tree()} | {error() | error_stacktrace(), tree()}.
 insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
     try
         Tree = rebalance(Tree0),
@@ -242,8 +245,8 @@ insert([{Key, _} | _] = Items, #bp_tree{order = Order} = Tree0) ->
 %%%% Removes keys and associated values from a B+ tree if predicates are satisfied.
 %%%% @end
 %%%%--------------------------------------------------------------------
--spec remove([{key(), remove_pred()}], tree()) ->
-    {ok, [key()], tree()} | {error() | error_stacktrace(), tree()}.
+-spec remove([{sortkey(), remove_pred()}], tree()) ->
+    {ok, [sortkey()], tree()} | {error() | error_stacktrace(), tree()}.
 remove([{Key, _} | _] = Items, Tree = #bp_tree{}) ->
     try
         {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
@@ -343,7 +346,7 @@ fold_unsafe({prev_key, Key}, Fun, Acc, Tree) ->
 %% Gets previous leaf.
 %% @end
 %%--------------------------------------------------------------------
--spec get_prev_leaf({node, bp_tree_node:id()} | {key, key()}, tree()) ->
+-spec get_prev_leaf({node, bp_tree_node:id()} | {key, sortkey()}, tree()) ->
     {bp_tree_node:id() | undefined, tree_node() | undefined, tree()}.
 get_prev_leaf({node, NodeId}, Tree) ->
     {{ok, Node}, Tree2} =  bp_tree_store:get_node(NodeId, Tree),
@@ -352,31 +355,6 @@ get_prev_leaf({key, Key}, Tree) ->
     {{ok, RootId}, Tree2} = bp_tree_store:get_root_id(Tree),
     {[{NodeId, _Node} | Path], Tree3} = bp_tree_path:find(Key, RootId, Tree2),
     get_prev_leaf(Path, NodeId, Key, Tree3).
-
-
--spec force_all_nodes_update_unsafe(tree()) -> {ok, tree()}.
-force_all_nodes_update_unsafe(Tree) ->
-    case bp_tree_store:get_root_id(Tree) of
-        {{ok, RootId}, Tree2} ->
-            {{ok, Node}, Tree3} =  bp_tree_store:get_node(RootId, Tree2),
-            force_all_nodes_update_unsafe(RootId, Node, Tree3);
-        {{error, not_found}, Tree2} ->
-            {ok, Tree2}
-    end.
-
-
--spec force_all_nodes_update_unsafe(bp_tree_node:id(), tree_node(), tree()) -> {ok, tree()}.
-force_all_nodes_update_unsafe(NodeId, Node, Tree) ->
-    {ok, Tree2} = bp_tree_store:update_node(NodeId, Node, Tree),
-    case bp_tree_node:is_leaf(Node) of
-        true ->
-            {ok, Tree2};
-        false ->
-            bp_tree_node:fold_all_children_ids(Node, fun(ChildId, {ok, TreeAcc}) ->
-                {{ok, ChildNode}, TreeAcc2} =  bp_tree_store:get_node(ChildId, TreeAcc),
-                force_all_nodes_update_unsafe(ChildId, ChildNode, TreeAcc2)
-            end, {ok, Tree2})
-    end.
 
 %%====================================================================
 %% Internal functions
@@ -840,4 +818,29 @@ rebalance(Tree0) ->
             end, Tree0, RBI),
             erase(rebalance_info),
             Tree5
+    end.
+
+%% @private
+-spec force_all_nodes_update_unsafe(tree()) -> {ok, tree()}.
+force_all_nodes_update_unsafe(Tree) ->
+    case bp_tree_store:get_root_id(Tree) of
+        {{ok, RootId}, Tree2} ->
+            {{ok, Node}, Tree3} =  bp_tree_store:get_node(RootId, Tree2),
+            force_all_nodes_update_unsafe(RootId, Node, Tree3);
+        {{error, not_found}, Tree2} ->
+            {ok, Tree2}
+    end.
+
+%% @private
+-spec force_all_nodes_update_unsafe(bp_tree_node:id(), tree_node(), tree()) -> {ok, tree()}.
+force_all_nodes_update_unsafe(NodeId, Node, Tree) ->
+    {ok, Tree2} = bp_tree_store:update_node(NodeId, Node, Tree),
+    case bp_tree_node:is_leaf(Node) of
+        true ->
+            {ok, Tree2};
+        false ->
+            bp_tree_node:fold_all_children_ids(Node, fun(ChildId, {ok, TreeAcc}) ->
+                {{ok, ChildNode}, TreeAcc2} =  bp_tree_store:get_node(ChildId, TreeAcc),
+                force_all_nodes_update_unsafe(ChildId, ChildNode, TreeAcc2)
+            end, {ok, Tree2})
     end.

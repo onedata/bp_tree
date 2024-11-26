@@ -26,18 +26,22 @@
 -export([to_list/1, from_list/1, to_map/1, from_map/1]).
 
 -record(bp_tree_array, {
-    size,
-    data
+    size :: non_neg_integer(),
+    data :: tuple()
 }).
 
--type key() :: any().
--type value() :: any().
--type selector() :: key | left | right | both | lower_bound | lower_bound_key.
--type pos() :: non_neg_integer() | first | last.
--type remove_pred() :: fun((value()) -> boolean()).
 -opaque array() :: #bp_tree_array{}.
+-type selector() :: key | left | right | both | lower_bound | lower_bound_key.
 
 -export_type([array/0, selector/0]).
+
+
+% internal types
+-type key() :: bp_tree:key().
+-type value() :: bp_tree:value().
+-type pos() :: non_neg_integer() | first | last.
+-type remove_pred() :: fun((value()) -> boolean()).
+
 
 %%====================================================================
 %% API functions

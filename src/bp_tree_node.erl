@@ -53,9 +53,9 @@ new(Leaf, MaxSize) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec key(pos_integer(), bp_tree:tree_node()) ->
-    {ok, bp_tree:value()} | {error, out_of_range}.
+    {ok, bp_tree:key()} | {error, out_of_range}.
 key(Pos, #bp_tree_node{leaf = true, children = Children}) ->
-    bp_tree_children:get({key, Pos}, Children).
+    bp_tree_children:get_key(Pos, Children).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -65,7 +65,7 @@ key(Pos, #bp_tree_node{leaf = true, children = Children}) ->
 -spec value(pos_integer(), bp_tree:tree_node()) ->
     {ok, bp_tree:value()} | {error, out_of_range}.
 value(Pos, #bp_tree_node{leaf = true, children = Children}) ->
-    bp_tree_children:get({left, Pos}, Children).
+    bp_tree_children:get_value({left, Pos}, Children).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -86,11 +86,11 @@ size(#bp_tree_node{children = Children}) ->
 child(_Key, #bp_tree_node{leaf = true}) ->
     {error, not_found};
 child(Key, #bp_tree_node{leaf = false, children = Children}) ->
-    case bp_tree_children:get({lower_bound, Key}, Children) of
+    case bp_tree_children:get_value({lower_bound, Key}, Children) of
         {ok, NodeId} ->
             {ok, NodeId};
         {error, out_of_range} ->
-            {ok, _NodeId} = bp_tree_children:get({right, last}, Children)
+            {ok, _NodeId} = bp_tree_children:get_value({right, last}, Children)
     end.
 
 %%--------------------------------------------------------------------
@@ -105,20 +105,20 @@ child_with_sibling(_Key, #bp_tree_node{leaf = true}) ->
     {error, not_found};
 child_with_sibling(Key, #bp_tree_node{leaf = false, children = Children}) ->
     Pos = bp_tree_children:lower_bound(Key, Children),
-    case bp_tree_children:get({left, Pos}, Children) of
+    case bp_tree_children:get_value({left, Pos}, Children) of
         {ok, NodeId} ->
-            case bp_tree_children:get({left, Pos - 1}, Children) of
+            case bp_tree_children:get_value({left, Pos - 1}, Children) of
                 {ok, LNodeId} ->
-                    {ok, Key2} = bp_tree_children:get({key, Pos - 1}, Children),
+                    {ok, Key2} = bp_tree_children:get_key(Pos - 1, Children),
                     {ok, LNodeId, Key2, NodeId};
                 {error, out_of_range} ->
-                    {ok, Key2} = bp_tree_children:get({key, Pos}, Children),
-                    {ok, RNodeId} = bp_tree_children:get({right, Pos}, Children),
+                    {ok, Key2} = bp_tree_children:get_key(Pos, Children),
+                    {ok, RNodeId} = bp_tree_children:get_value({right, Pos}, Children),
                     {ok, NodeId, Key2, RNodeId}
             end;
         {error, out_of_range} ->
-            {ok, Key2} = bp_tree_children:get({key, last}, Children),
-            {ok, {LNodeId, RNodeId}} = bp_tree_children:get({both, last}, Children),
+            {ok, Key2} = bp_tree_children:get_key(last, Children),
+            {ok, {LNodeId, RNodeId}} = bp_tree_children:get_value({both, last}, Children),
             {ok, LNodeId, Key2, RNodeId}
     end.
 
@@ -134,12 +134,12 @@ child_with_right_sibling(_Key, #bp_tree_node{leaf = true}) ->
     {error, not_found};
 child_with_right_sibling(Key, #bp_tree_node{leaf = false, children = Children}) ->
     Pos = bp_tree_children:lower_bound(Key, Children),
-    case bp_tree_children:get({left, Pos}, Children) of
+    case bp_tree_children:get_value({left, Pos}, Children) of
         {ok, NodeId} ->
-            {ok, RNodeId} = bp_tree_children:get({right, Pos}, Children),
+            {ok, RNodeId} = bp_tree_children:get_value({right, Pos}, Children),
             {ok, NodeId, RNodeId};
         {error, out_of_range} ->
-            {ok, NodeId} = bp_tree_children:get({right, last}, Children),
+            {ok, NodeId} = bp_tree_children:get_value({right, last}, Children),
             {ok, NodeId, ?NIL}
     end.
 
@@ -153,7 +153,7 @@ child_with_right_sibling(Key, #bp_tree_node{leaf = false, children = Children}) 
     {ok, bp_tree_node:id()} | {error, out_of_range}.
 left_sibling(Key, #bp_tree_node{leaf = false, children = Children}) ->
     Pos = bp_tree_children:lower_bound(Key, Children) - 2,
-    bp_tree_children:get({left, Pos}, Children).
+    bp_tree_children:get_value({left, Pos}, Children).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -165,7 +165,7 @@ left_sibling(Key, #bp_tree_node{leaf = false, children = Children}) ->
 leftmost_child(#bp_tree_node{leaf = true}) ->
     {error, not_found};
 leftmost_child(#bp_tree_node{leaf = false, children = Children}) ->
-    {ok, _NodeId} = bp_tree_children:get({left, first}, Children).
+    {ok, _NodeId} = bp_tree_children:get_value({left, first}, Children).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -175,7 +175,7 @@ leftmost_child(#bp_tree_node{leaf = false, children = Children}) ->
 -spec right_sibling(bp_tree:tree_node()) ->
     {ok, id()} | {error, not_found}.
 right_sibling(#bp_tree_node{leaf = true, children = Children}) ->
-    case bp_tree_children:get({right, last}, Children) of
+    case bp_tree_children:get_value({right, last}, Children) of
         {ok, ?NIL} -> {error, not_found};
         {ok, NodeId} -> {ok, NodeId};
         {error, out_of_range} -> {error, not_found}
@@ -312,13 +312,12 @@ split(LNode = #bp_tree_node{leaf = false, children = Children}) ->
     non_neg_integer()) ->
     {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
 rotate_right(LNode, ParentKey, RNode, Order) ->
-    {LNode2, ParentKey2, RNode2} = Ans =
-        rotate_right(LNode, ParentKey, RNode),
+    {LNode2, ParentKey2, RNode2} = FirstRotationResult = rotate_right(LNode, ParentKey, RNode),
     case ?MODULE:size(RNode2) < Order of
         true ->
             rotate_right(LNode2, ParentKey2, RNode2, Order);
         _ ->
-            Ans
+            FirstRotationResult
     end.
 
 %%--------------------------------------------------------------------
@@ -421,11 +420,11 @@ is_leaf(#bp_tree_node{leaf = IsLeaf}) ->
     {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
 rotate_right(LNode = #bp_tree_node{leaf = true, children = LChildren},
     _ParentKey, RNode = #bp_tree_node{leaf = true, children = RChildren}) ->
-    {ok, Key} = bp_tree_children:get({key, last}, LChildren),
-    {ok, Value} = bp_tree_children:get({left, last}, LChildren),
+    {ok, Key} = bp_tree_children:get_key(last, LChildren),
+    {ok, Value} = bp_tree_children:get_value({left, last}, LChildren),
     {ok, LChildren2, _} = bp_tree_children:remove({left, Key}, LChildren),
     {ok, RChildren2} = bp_tree_children:prepend(Key, Value, RChildren),
-    {ok, ParentKey2} = bp_tree_children:get({key, last}, LChildren2),
+    {ok, ParentKey2} = bp_tree_children:get_key(last, LChildren2),
     {
         LNode#bp_tree_node{children = LChildren2},
         ParentKey2,
@@ -433,8 +432,8 @@ rotate_right(LNode = #bp_tree_node{leaf = true, children = LChildren},
     };
 rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
     ParentKey, RNode = #bp_tree_node{leaf = false, children = RChildren}) ->
-    {ok, Key} = bp_tree_children:get({key, last}, LChildren),
-    {ok, Value} = bp_tree_children:get({right, last}, LChildren),
+    {ok, Key} = bp_tree_children:get_key(last, LChildren),
+    {ok, Value} = bp_tree_children:get_value({right, last}, LChildren),
     {ok, LChildren2, _} = bp_tree_children:remove({right, Key}, LChildren),
     {ok, RChildren2} = bp_tree_children:prepend(ParentKey, Value, RChildren),
     {
@@ -453,10 +452,10 @@ rotate_right(LNode = #bp_tree_node{leaf = false, children = LChildren},
     {bp_tree:tree_node(), bp_tree:key(), bp_tree:tree_node()}.
 rotate_left(LNode = #bp_tree_node{leaf = true, children = LChildren},
     _ParentKey, RNode = #bp_tree_node{leaf = true, children = RChildren}) ->
-    {ok, Key} = bp_tree_children:get({key, first}, RChildren),
-    {ok, Value} = bp_tree_children:get({left, first}, RChildren),
+    {ok, Key} = bp_tree_children:get_key(first, RChildren),
+    {ok, Value} = bp_tree_children:get_value({left, first}, RChildren),
     {ok, RChildren2, _} = bp_tree_children:remove({left, Key}, RChildren),
-    {ok, Next} = bp_tree_children:get({right, last}, LChildren),
+    {ok, Next} = bp_tree_children:get_value({right, last}, LChildren),
     {ok, LChildren2} = bp_tree_children:append({both, Key}, {Value, Next}, LChildren),
     {
         LNode#bp_tree_node{children = LChildren2},
@@ -465,8 +464,8 @@ rotate_left(LNode = #bp_tree_node{leaf = true, children = LChildren},
     };
 rotate_left(LNode = #bp_tree_node{leaf = false, children = LChildren},
     ParentKey, RNode = #bp_tree_node{leaf = false, children = RChildren}) ->
-    {ok, Key} = bp_tree_children:get({key, first}, RChildren),
-    {ok, Value} = bp_tree_children:get({left, first}, RChildren),
+    {ok, Key} = bp_tree_children:get_key(first, RChildren),
+    {ok, Value} = bp_tree_children:get_value({left, first}, RChildren),
     {ok, RChildren2, _} = bp_tree_children:remove({left, Key}, RChildren),
     {ok, LChildren2} = bp_tree_children:append({right, ParentKey}, Value, LChildren),
     {
