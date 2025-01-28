@@ -844,3 +844,4 @@ force_all_nodes_update_unsafe(NodeId, Node, Tree) ->
                 force_all_nodes_update_unsafe(ChildId, ChildNode, TreeAcc2)
             end, {ok, Tree2})
     end.
+% fixme run eunits and dialyzer at the end
