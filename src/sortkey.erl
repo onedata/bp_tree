@@ -29,8 +29,12 @@
 -opaque compound() :: [binary() | integer()].
 -export_type([lexicographic/0, numeric/0, compound/0]).
 
--type index() :: binary() | integer() | [binary() | integer()].
--export_type([index/0]).
+
+
+-type lexicographic_index() :: binary().
+-type numeric_index() :: integer().
+-type compound_index() :: [binary() | integer()].
+-export_type([lexicographic_index/0, numeric_index/0, compound_index/0]).
 
 %%%===================================================================
 %%% API
@@ -68,9 +72,9 @@ unpack_compound(List) when is_list(List) ->
 
 
 -spec to_index
-    (lexicographic()) -> binary();
-    (numeric()) -> integer();
-    (compound()) -> [binary() | integer()].
+    (lexicographic()) -> lexicographic_index();
+    (numeric()) -> numeric_index();
+    (compound()) -> compound_index().
 to_index(Binary) when is_binary(Binary) ->
     unpack_lexicographic(Binary);
 to_index(Integer) when is_integer(Integer) ->
@@ -80,9 +84,9 @@ to_index(List) when is_list(List) ->
 
 
 -spec from_index
-    (binary()) -> lexicographic();
-    (integer()) -> numeric();
-    ([binary() | integer()]) -> compound().
+    (lexicographic_index()) -> lexicographic();
+    (numeric_index()) -> numeric();
+    (compound_index()) -> compound().
 from_index(Binary) when is_binary(Binary) ->
     pack_lexicographic(Binary);
 from_index(Integer) when is_integer(Integer) ->
