@@ -10,6 +10,7 @@
 %%% used for sorting the entries.
 %%% fixme napisac jak sie sortuja miedzy soba,
 %%% opisac typy
+%%% fixme opisac jak sie ma sortkey do indexu
 %%% @end
 %%%-------------------------------------------------------------------
 -module(sortkey).
@@ -20,7 +21,7 @@
 -export([pack_lexicographic/1, unpack_lexicographic/1]).
 -export([pack_numeric/1, unpack_numeric/1]).
 -export([pack_compound/1, unpack_compound/1]).
-%%-export([descending_time_order]).  % fixme
+-export([to_index/1, from_index/1]).
 
 
 -opaque lexicographic() :: binary().
@@ -28,6 +29,8 @@
 -opaque compound() :: [binary() | integer()].
 -export_type([lexicographic/0, numeric/0, compound/0]).
 
+-type index() :: binary() | integer() | [binary() | integer()].
+-export_type([index/0]).
 
 %%%===================================================================
 %%% API
@@ -62,6 +65,30 @@ pack_compound(List) when is_list(List) ->
 -spec unpack_compound(compound()) -> [binary() | integer()].
 unpack_compound(List) when is_list(List) ->
     List.
+
+
+-spec to_index
+    (lexicographic()) -> binary();
+    (numeric()) -> integer();
+    (compound()) -> [binary() | integer()].
+to_index(Binary) when is_binary(Binary) ->
+    unpack_lexicographic(Binary);
+to_index(Integer) when is_integer(Integer) ->
+    unpack_numeric(Integer);
+to_index(List) when is_list(List) ->
+    unpack_compound(List).
+
+
+-spec from_index
+    (binary()) -> lexicographic();
+    (integer()) -> numeric();
+    ([binary() | integer()]) -> compound().
+from_index(Binary) when is_binary(Binary) ->
+    pack_lexicographic(Binary);
+from_index(Integer) when is_integer(Integer) ->
+    pack_numeric(Integer);
+from_index(List) when is_list(List) ->
+    pack_compound(List).
 
 
 %%%===================================================================
